@@ -1,0 +1,9874 @@
+import express from 'express';
+import cors from 'cors';
+import 'dotenv/config';
+import { Pool } from "pg";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
+import validator from "validator";
+import { fileURLToPath } from "url";
+import http from 'http';
+import { Server } from 'socket.io';
+import sgMail from '@sendgrid/mail';
+import Razorpay from 'razorpay';
+import crypto from 'crypto';
+import PDFDocument from 'pdfkit';
+
+// ================= APP CONFIG =================
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    credentials: true
+  }
+});
+
+// Setup SendGrid
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+}
+
+// Initialize Razorpay Safely
+let razorpay = null;
+
+// Function to initialize/update Razorpay instance
+const initRazorpay = async () => {
+  try {
+    const keyResult = await pool.query("SELECT value FROM settings WHERE key = 'razorpay_key_id'");
+    const secretResult = await pool.query("SELECT value FROM settings WHERE key = 'razorpay_key_secret'");
+
+    const keyId = keyResult.rows[0]?.value;
+    const keySecret = secretResult.rows[0]?.value;
+
+    if (keyId && keySecret && keyId !== '' && keySecret !== '') {
+      razorpay = new Razorpay({
+        key_id: keyId,
+        key_secret: keySecret,
+      });
+      console.log("✅ Razorpay initialized with admin credentials");
+    } else {
+      razorpay = null;
+    }
+  } catch (err) {
+    console.error("Failed to initialize Razorpay:", err);
+    razorpay = null;
+  }
+};
+
+const PORT = process.env.PORT || 5000;
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+
+// Admin Email Notification Helper
+const sendAdminNotification = async (order) => {
+  try {
+    if (!process.env.SENDGRID_API_KEY) {
+      console.warn("⚠️ SendGrid API Key missing. Skipping email notification.");
+      return;
+    }
+
+    const msg = {
+      to: process.env.ADMIN_EMAIL,
+      from: process.env.FROM_EMAIL,
+      subject: "🚀 New Order Received",
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee;">
+          <h2 style="color: #8E2139;">New Order #${order.id}</h2>
+          <p><strong>Customer:</strong> ${order.customer_name}</p>
+          <p><strong>Email:</strong> ${order.email}</p>
+          <p><strong>Phone:</strong> ${order.phone}</p>
+          <p><strong>Address:</strong> ${order.address}</p>
+          <hr/>
+          <h3 style="color: #333;">Total Amount: ₹${order.total_amount}</h3>
+          <p><strong>Payment Method:</strong> ${order.payment_method}</p>
+          <p>Verify this order in your dashboard.</p>
+        </div>
+      `,
+    };
+
+    await sgMail.send(msg);
+    console.log("✅ Admin notification email sent");
+  } catch (err) {
+    console.error("❌ Email notification failed:", err.message);
+  }
+};
+
+// ================= MIDDLEWARE =================
+app.use(
+  cors({
+    origin: "*",
+    credentials: true,
+  })
+);
+
+// ================= SHIPROCKET WEBHOOK (RENAMED - NO RESTRICTED KEYWORDS) =================
+app.post("/api/webhooks/order-tracking", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    // Get the webhook secret from database
+    const config = await getShiprocketConfig(true);
+    const webhookSecret = config.shiprocket_webhook_secret || process.env.SHIPROCKET_WEBHOOK_SECRET || "JayastraWebhookSecure123";
+
+    // Get signature from headers - Shiprocket uses 'x-api-key'
+    const apiKey = req.headers['x-api-key'];
+    const rawBody = req.body.toString();
+
+    console.log("📦 Webhook received at:", new Date().toISOString());
+    console.log("Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("Raw body length:", rawBody.length);
+
+    // Verify the API key
+    if (webhookSecret && webhookSecret !== "JayastraWebhookSecure123") {
+      if (apiKey !== webhookSecret) {
+        console.warn("⚠️ Invalid webhook API key received");
+        return res.status(401).json({ success: false, message: "Invalid API key" });
+      } else {
+        console.log("✅ Webhook API key verified");
+      }
+    } else {
+      console.log("⚠️ Webhook secret not configured, accepting any key");
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (e) {
+      console.error("Failed to parse webhook body:", e.message);
+      return res.status(400).json({ success: false, message: "Invalid JSON" });
+    }
+
+    console.log("📦 Webhook payload:", JSON.stringify(payload, null, 2));
+
+    const { shipment_id, order_id, status, awb_code, event } = payload;
+
+    let dbStatus = null;
+    let eventType = event || payload.status;
+
+    // Map Shiprocket status to your order status
+    if (eventType) {
+      const s = eventType.toLowerCase();
+
+      if (s.includes("pickup") || s.includes("manifest") || s === "pickup_generated") {
+        dbStatus = "Processing";
+      } else if (s.includes("ship") || s === "shipped" || s.includes("transit")) {
+        dbStatus = "Shipped";
+      } else if (s.includes("out for delivery") || s === "out_for_delivery") {
+        dbStatus = "Out for Delivery";
+      } else if (s.includes("delivered") || s === "delivered") {
+        dbStatus = "Delivered";
+      } else if (s.includes("return") || s.includes("rto") || s === "return_to_origin") {
+        dbStatus = "Returned";
+      } else if (s.includes("cancel") || s === "cancelled") {
+        dbStatus = "Cancelled";
+      }
+    }
+
+    // Update order in database
+    if (dbStatus && (shipment_id || order_id)) {
+      let query = "UPDATE orders SET order_status = $1, updated_at = NOW()";
+      let params = [dbStatus];
+      let condition = "";
+      let conditionParam = "";
+
+      if (shipment_id) {
+        condition = " WHERE shiprocket_shipment_id = $2";
+        conditionParam = shipment_id.toString();
+        params.push(conditionParam);
+      } else if (order_id) {
+        condition = " WHERE shiprocket_order_id = $2";
+        conditionParam = order_id.toString();
+        params.push(conditionParam);
+      }
+
+      if (condition) {
+        const result = await pool.query(query + condition, params);
+
+        if (result.rowCount > 0) {
+          console.log(`✅ Updated order status to ${dbStatus} for ${conditionParam}`);
+
+          if (dbStatus === "Delivered") {
+            await pool.query(
+              `UPDATE orders SET payment_status = 'Completed' WHERE ${condition}`,
+              params
+            );
+          }
+
+          io.emit('order_status_updated', {
+            order_id: conditionParam,
+            status: dbStatus,
+            awb_code: awb_code
+          });
+        } else {
+          console.log(`⚠️ No order found with ${conditionParam}`);
+        }
+      }
+    }
+
+    // Update AWB code if provided
+    if (awb_code && shipment_id) {
+      await pool.query(
+        `UPDATE orders SET awb_code = $1 WHERE shiprocket_shipment_id = $2 AND (awb_code IS NULL OR awb_code = '')`,
+        [awb_code, shipment_id.toString()]
+      );
+      console.log(`✅ Updated AWB ${awb_code} for shipment ${shipment_id}`);
+    }
+
+    res.status(200).json({ success: true, message: "Webhook processed" });
+  } catch (error) {
+    console.error("❌ Webhook error:", error);
+    res.status(200).json({ success: false, message: error.message });
+  }
+});
+
+// Test endpoint for webhook
+app.get("/api/webhooks/order-tracking", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Webhook endpoint is working. Use POST method for webhook events.",
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.post("/api/razorpay/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const signature = req.headers['x-razorpay-signature'];
+
+    // Get the raw body as string
+    const rawBody = req.body.toString();
+
+    const expectedSignature = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(rawBody)
+      .digest('hex');
+
+    console.log("Webhook received - signature valid:", signature === expectedSignature);
+
+    if (signature !== expectedSignature) {
+      console.error("Invalid webhook signature");
+      return res.status(400).json({ success: false, message: 'Invalid webhook signature' });
+    }
+
+    const event = JSON.parse(rawBody);
+    console.log("Webhook event:", event.event);
+
+    if (event.event === 'payment.captured') {
+      const payment = event.payload.payment.entity;
+      const orderId = payment.order_id;
+      const paymentId = payment.id;
+
+      // Update order payment status
+      await pool.query(
+        `UPDATE orders 
+         SET payment_status = 'Completed', 
+             razorpay_payment_id = $1, 
+             updated_at = NOW() 
+         WHERE razorpay_order_id = $2 AND payment_status != 'Completed'`,
+        [paymentId, orderId]
+      );
+
+      console.log(`✅ Payment captured for order: ${orderId}`);
+    }
+
+    if (event.event === 'payment.failed') {
+      const payment = event.payload.payment.entity;
+      console.log(`❌ Payment failed for order: ${payment.order_id}`);
+      // Optionally update order status
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Webhook error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+
+app.use(express.json({ limit: '50mb' }));
+
+// ================= DATABASE =================
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
+
+pool.connect()
+  .then(() => console.log("✅ PostgreSQL Connected"))
+  .catch(err => console.error("❌ DB Connection Error", err));
+export default pool;
+
+// ================= FILE UPLOAD (ENHANCED) =================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const UPLOAD_BASE_PATH = process.env.UPLOAD_PATH || path.join(__dirname, "uploads");
+if (!fs.existsSync(UPLOAD_BASE_PATH)) fs.mkdirSync(UPLOAD_BASE_PATH, { recursive: true });
+
+// Helper: validate image files
+const validateImageFile = (file) => {
+  const allowedExt = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+  const allowedMime = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  const ext = path.extname(file.originalname).toLowerCase();
+  if (!allowedExt.includes(ext)) throw new Error(`Invalid image extension. Allowed: ${allowedExt.join(', ')}`);
+  if (!allowedMime.includes(file.mimetype)) throw new Error(`Invalid image MIME type. Allowed: ${allowedMime.join(', ')}`);
+  return true;
+};
+
+// Helper: validate video files
+const validateVideoFile = (file) => {
+  const allowedExt = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.wmv', '.flv', '.m4v'];
+  const allowedMime = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska', 'video/webm', 'video/x-ms-wmv', 'video/x-flv'];
+  const ext = path.extname(file.originalname).toLowerCase();
+  if (!allowedExt.includes(ext)) throw new Error(`Invalid video extension. Allowed: ${allowedExt.join(', ')}`);
+  if (!allowedMime.includes(file.mimetype)) throw new Error(`Invalid video MIME type. Allowed: ${allowedMime.join(', ')}`);
+  return true;
+};
+
+const productStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    let folder = 'products';
+    if (file.fieldname === 'video') folder = 'products/videos';
+    else if (file.fieldname === 'image') folder = 'products/images';
+    const dir = path.join(UPLOAD_BASE_PATH, folder);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+  }
+});
+
+const uploadProductMedia = multer({
+  storage: productStorage,
+  // limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    try {
+      if (file.fieldname === 'image') validateImageFile(file);
+      else if (file.fieldname === 'video') validateVideoFile(file);
+      else throw new Error('Unexpected field');
+      cb(null, true);
+    } catch (err) {
+      cb(err);
+    }
+  }
+});
+
+const bannerStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(UPLOAD_BASE_PATH, 'banners');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, 'banner-' + uniqueSuffix + ext);
+  }
+});
+
+const uploadBannerMedia = multer({
+  storage: bannerStorage,
+  // limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    try {
+      if (file.fieldname === 'image') validateImageFile(file);
+      else if (file.fieldname === 'video') validateVideoFile(file);
+      else throw new Error('Unexpected field');
+      cb(null, true);
+    } catch (err) {
+      cb(err);
+    }
+  }
+});
+
+const returnStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(UPLOAD_BASE_PATH, 'returns');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, 'return-' + uniqueSuffix + ext);
+  }
+});
+
+const uploadReturnVideo = multer({
+  storage: returnStorage,
+  // limits: { fileSize: 150 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    try {
+      validateVideoFile(file);
+      cb(null, true);
+    } catch (err) {
+      cb(err);
+    }
+  }
+});
+
+app.use("/uploads", express.static(UPLOAD_BASE_PATH));
+
+const legacyStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(UPLOAD_BASE_PATH)) fs.mkdirSync(UPLOAD_BASE_PATH, { recursive: true });
+    cb(null, UPLOAD_BASE_PATH);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const upload = multer({ storage: legacyStorage });
+
+// ================= AUTH MIDDLEWARE =================
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ message: "No token provided" });
+  const token = authHeader.split(" ")[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const userResult = await pool.query("SELECT id, role FROM users WHERE id = $1", [decoded.id]);
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({ message: "User no longer exists. Please login again." });
+    }
+    req.user = { ...decoded, ...userResult.rows[0] };
+    next();
+  } catch (error) {
+    res.status(401).json({ message: "Invalid token" });
+  }
+};
+
+const verifyAdmin = (req, res, next) => {
+  if (!req.user.role || req.user.role.toLowerCase() !== "admin") {
+    return res.status(403).json({ message: "Admin access required" });
+  }
+  next();
+};
+
+const verifyAdminOrSuperAdmin = (req, res, next) => {
+  const role = req.user.role?.toLowerCase();
+  if (role !== "super_admin" && role !== "admin") {
+    return res.status(403).json({ message: "Admin or Super Admin access required" });
+  }
+  next();
+};
+
+const verifySuperAdmin = (req, res, next) => {
+  if (!req.user.role || req.user.role.toLowerCase() !== "super_admin") {
+    return res.status(403).json({ message: "Super Admin access required" });
+  }
+  next();
+};
+
+const verifyAnyAdmin = (req, res, next) => {
+  const role = req.user.role?.toLowerCase();
+  if (role !== "super_admin" && role !== "vendor" && role !== "admin") {
+    return res.status(403).json({ message: "Vendor or Admin access required" });
+  }
+  next();
+};
+
+// ISOLATION MIDDLEWARE
+const verifyAdminVendorIndividualAccess = (req, res, next) => {
+  const role = req.user.role?.toLowerCase();
+  if (role === "super_admin") {
+    return next();
+  }
+  if (role === "admin" || role === "vendor") {
+    req.vendorId = req.user.id;
+    return next();
+  }
+  return res.status(403).json({ message: "Admin or Vendor access required" });
+};
+
+// ================= DATABASE INIT =================
+const initDatabase = async () => {
+  try {
+    // 1. users
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role VARCHAR(20) DEFAULT 'user',
+        phone VARCHAR(20),
+        status VARCHAR(20) DEFAULT 'Active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'Active'`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS provider VARCHAR(50);`);
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS first_name VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS last_name VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS gender VARCHAR(10),
+      ADD COLUMN IF NOT EXISTS address TEXT,
+      ADD COLUMN IF NOT EXISTS city VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS state VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS pincode VARCHAR(10),
+      ADD COLUMN IF NOT EXISTS store_name VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS balance DECIMAL(10,2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS gst_number VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS store_active BOOLEAN DEFAULT true,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    `);
+    await pool.query(`
+      ALTER TABLE users 
+      ALTER COLUMN email DROP NOT NULL,
+      ALTER COLUMN password DROP NOT NULL;
+    `);
+
+    await pool.query(`
+        ALTER TABLE users 
+        ADD COLUMN IF NOT EXISTS pickup_address_line1 TEXT,
+        ADD COLUMN IF NOT EXISTS pickup_address_line2 TEXT,
+        ADD COLUMN IF NOT EXISTS pickup_city VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS pickup_state VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS pickup_pincode VARCHAR(10),
+        ADD COLUMN IF NOT EXISTS pickup_location_name VARCHAR(255)
+      `);
+
+
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS vendor_pickup_addresses (
+          id SERIAL PRIMARY KEY,
+          vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          location_name VARCHAR(255) NOT NULL,
+          address_line1 TEXT NOT NULL,
+          address_line2 TEXT,
+          city VARCHAR(100) NOT NULL,
+          state VARCHAR(100) NOT NULL,
+          pincode VARCHAR(10) NOT NULL,
+          is_default BOOLEAN DEFAULT false,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+    await pool.query(`
+        INSERT INTO vendor_pickup_addresses (vendor_id, location_name, address_line1, address_line2, city, state, pincode, is_default)
+        SELECT id, pickup_location_name, pickup_address_line1, pickup_address_line2, pickup_city, pickup_state, pickup_pincode, true
+        FROM users
+        WHERE pickup_pincode IS NOT NULL AND pickup_location_name IS NOT NULL
+        ON CONFLICT DO NOTHING
+      `);
+
+    await pool.query(`
+    ALTER TABLE vendor_pickup_addresses 
+    ADD COLUMN IF NOT EXISTS shiprocket_pickup_id VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS shiprocket_synced BOOLEAN DEFAULT false
+  `);
+    // 2. addresses
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS addresses(
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255),
+        phone VARCHAR(20),
+        address TEXT,
+        city VARCHAR(100),
+        state VARCHAR(100),
+        pincode VARCHAR(10),
+        type VARCHAR(20) DEFAULT 'HOME',
+        house_no VARCHAR(255),
+        street_area VARCHAR(255),
+        landmark VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await pool.query(`
+      ALTER TABLE addresses 
+      ADD COLUMN IF NOT EXISTS house_no VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS street_area VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS landmark VARCHAR(255);
+    `);
+
+    // 3. categories
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS categories(
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) UNIQUE NOT NULL,
+      description TEXT,
+      image_url VARCHAR(500),
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+      `);
+    await pool.query(`
+      ALTER TABLE categories 
+      ADD COLUMN IF NOT EXISTS image_url VARCHAR(500),
+      ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0;
+    `);
+
+    await pool.query(`ALTER TABLE categories ADD COLUMN IF NOT EXISTS slug VARCHAR(255) UNIQUE; `);
+
+    // 4. sub_categories
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sub_categories(
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,
+      description TEXT,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(name, category_id)
+    )
+      `);
+    await pool.query(`
+      ALTER TABLE sub_categories 
+      ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE;
+    `);
+
+    // Add this inside your initDatabase() function, after creating categories table
+    await pool.query(`
+      ALTER TABLE categories 
+      ADD COLUMN IF NOT EXISTS show_in_navbar BOOLEAN DEFAULT true,
+      ADD COLUMN IF NOT EXISTS nav_order INTEGER DEFAULT 0
+        `);
+
+    // 5. products
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS products(
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          description TEXT,
+          old_price DECIMAL(10, 2),
+          price DECIMAL(10, 2) NOT NULL,
+          category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+          sub_category_id INTEGER REFERENCES sub_categories(id) ON DELETE SET NULL,
+          main_image_url VARCHAR(500),
+          video_url VARCHAR(500),
+          sku VARCHAR(100) UNIQUE,
+          stock_quantity INTEGER DEFAULT 0,
+          is_featured BOOLEAN DEFAULT false,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          platform_fee_percent DECIMAL(5, 2) DEFAULT 0.00
+        )
+      `);
+    await pool.query(`
+      ALTER TABLE products 
+      ADD COLUMN IF NOT EXISTS video_url VARCHAR(500),
+      ADD COLUMN IF NOT EXISTS color VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS product_code VARCHAR(100) UNIQUE,
+          ADD COLUMN IF NOT EXISTS weight DECIMAL(10, 2) DEFAULT 0.7,
+            ADD COLUMN IF NOT EXISTS length DECIMAL(10, 2) DEFAULT 30,
+              ADD COLUMN IF NOT EXISTS width DECIMAL(10, 2) DEFAULT 20,
+                ADD COLUMN IF NOT EXISTS height DECIMAL(10, 2) DEFAULT 5,
+                  ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    ADD COLUMN IF NOT EXISTS platform_fee_percent DECIMAL(5, 2) DEFAULT 0.00
+    `);
+
+    await pool.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"; `);
+    await pool.query(`
+          ALTER TABLE products 
+          ADD COLUMN IF NOT EXISTS uuid UUID DEFAULT gen_random_uuid() NOT NULL UNIQUE
+        `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_products_uuid ON products(uuid)`);
+    await pool.query(`UPDATE products SET uuid = gen_random_uuid() WHERE uuid IS NULL`);
+
+    // 6. product_variants
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS product_variants(
+        id SERIAL PRIMARY KEY,
+        product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+        variant_name VARCHAR(100) NOT NULL,
+        quantity DECIMAL(10, 2) DEFAULT 0,
+        unit VARCHAR(20) DEFAULT 'ml',
+        price DECIMAL(10, 2) DEFAULT 0,
+        stock_quantity INTEGER DEFAULT 0,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // 7. product_images
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS product_images(
+                      id SERIAL PRIMARY KEY,
+                      product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+                      image_url VARCHAR(500) NOT NULL,
+                      display_order INTEGER DEFAULT 0,
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+      `);
+
+    // 8. cart_items
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cart_items(
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+        quantity INTEGER DEFAULT 1,
+        variant_id INTEGER REFERENCES product_variants(id) ON DELETE SET NULL,
+        variant_name VARCHAR(100),
+        variant_price DECIMAL(10, 2),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, product_id)
+      )
+      `);
+
+    // 9. wishlist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS wishlist(
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, product_id)
+      )
+      `);
+
+    // 9. coupons 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS coupons(
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        discount_type VARCHAR(20) CHECK(discount_type IN('percentage', 'flat')),
+        discount_value DECIMAL(10, 2) NOT NULL,
+        min_order_amount DECIMAL(10, 2) DEFAULT 0,
+        max_discount DECIMAL(10, 2),
+        usage_limit INTEGER DEFAULT 0,
+        used_count INTEGER DEFAULT 0,
+        expiry_date TIMESTAMP,
+        is_active BOOLEAN DEFAULT true,
+        is_hidden BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await pool.query(`ALTER TABLE coupons ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false; `);
+    await pool.query(`ALTER TABLE coupons ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE; `);
+
+    // 10. orders 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS orders(
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      customer_name VARCHAR(255) NOT NULL,
+      email VARCHAR(255),
+      phone VARCHAR(20) NOT NULL,
+      address TEXT NOT NULL,
+      total_amount DECIMAL(10, 2) NOT NULL,
+      status VARCHAR(50) DEFAULT 'Pending',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+      `);
+    await pool.query(`
+      ALTER TABLE orders 
+      ADD COLUMN IF NOT EXISTS discount DECIMAL(10, 2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS coupon_id INTEGER REFERENCES coupons(id),
+        ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'COD',
+          ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'Pending',
+            ADD COLUMN IF NOT EXISTS order_status VARCHAR(50) DEFAULT 'Placed',
+              ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS shiprocket_order_id VARCHAR(100),
+                  ADD COLUMN IF NOT EXISTS shiprocket_shipment_id VARCHAR(100),
+                    ADD COLUMN IF NOT EXISTS awb_code VARCHAR(100),
+                      ADD COLUMN IF NOT EXISTS house_no VARCHAR(255),
+                        ADD COLUMN IF NOT EXISTS street_area VARCHAR(255),
+                          ADD COLUMN IF NOT EXISTS landmark VARCHAR(255),
+                            ADD COLUMN IF NOT EXISTS razorpay_order_id VARCHAR(255),
+                              ADD COLUMN IF NOT EXISTS razorpay_payment_id VARCHAR(255),
+                                ADD COLUMN IF NOT EXISTS city VARCHAR(100),
+                                  ADD COLUMN IF NOT EXISTS state VARCHAR(100),
+                                    ADD COLUMN IF NOT EXISTS pincode VARCHAR(10),
+                                      ADD COLUMN IF NOT EXISTS country VARCHAR(50) DEFAULT 'India',
+                                        ADD COLUMN IF NOT EXISTS pickup_address_line1 TEXT,
+                                          ADD COLUMN IF NOT EXISTS pickup_address_line2 TEXT,
+                                            ADD COLUMN IF NOT EXISTS pickup_city VARCHAR(100),
+                                              ADD COLUMN IF NOT EXISTS pickup_state VARCHAR(100),
+                                                ADD COLUMN IF NOT EXISTS pickup_pincode VARCHAR(10),
+                                                  ADD COLUMN IF NOT EXISTS pickup_location_name VARCHAR(255),
+                                                    ADD COLUMN IF NOT EXISTS pickup_schedule_date VARCHAR(50),
+                                                      ADD COLUMN IF NOT EXISTS pickup_schedule_time VARCHAR(100),
+                                                        ADD COLUMN IF NOT EXISTS pickup_schedule_display VARCHAR(255);
+    `);
+
+    // 11. order_items
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS order_items(
+      id SERIAL PRIMARY KEY,
+      order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+      product_id INTEGER REFERENCES products(id),
+      quantity INTEGER NOT NULL,
+      price DECIMAL(10, 2) NOT NULL,
+      vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      vendor_earning DECIMAL(10, 2) DEFAULT 0
+    )
+      `);
+    await pool.query(`
+      ALTER TABLE order_items 
+      ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      ADD COLUMN IF NOT EXISTS vendor_earning DECIMAL(10, 2) DEFAULT 0;
+    `);
+
+    // PAYOUTS
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payouts(
+      id SERIAL PRIMARY KEY,
+      vendor_id INTEGER REFERENCES users(id),
+      amount DECIMAL(10, 2) NOT NULL,
+      status VARCHAR(50) DEFAULT 'Pending',
+      bank_details TEXT,
+      requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      processed_at TIMESTAMP
+    );
+    `);
+
+    await pool.query(`
+      ALTER TABLE payouts 
+      ADD COLUMN IF NOT EXISTS rejection_reason TEXT,
+      ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          `);
+
+    // 12. inventory
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS inventory(
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+            stock_quantity INTEGER DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+      `);
+
+    // 13. banners
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS banners(
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(255),
+        image_url VARCHAR(500),
+        link VARCHAR(500),
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS position INTEGER DEFAULT 0; `);
+    await pool.query(`ALTER TABLE banners ALTER COLUMN image_url DROP NOT NULL; `);
+    await pool.query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS subtitle VARCHAR(255); `);
+    await pool.query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS button_text VARCHAR(255); `);
+    await pool.query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS video_url VARCHAR(500); `);
+    await pool.query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'hero'; `);
+    await pool.query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL; `);
+    await pool.query(`ALTER TABLE banners ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE; `);
+
+    // 14. reviews
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS reviews(
+        id SERIAL PRIMARY KEY,
+        product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        rating INTEGER CHECK(rating >= 1 AND rating <= 5),
+        comment TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+      `);
+    await pool.query(`
+      ALTER TABLE reviews 
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS images TEXT[],
+        ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'approved';
+    `);
+    await pool.query(`
+      ALTER TABLE reviews 
+      DROP CONSTRAINT IF EXISTS unique_user_product_review,
+      ADD CONSTRAINT unique_user_product_review UNIQUE(user_id, product_id)
+        `);
+
+    // 15. returns
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS returns(
+          id SERIAL PRIMARY KEY,
+          order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          video_url VARCHAR(500) NOT NULL,
+          reason TEXT,
+          status VARCHAR(50) DEFAULT 'Pending',
+          admin_comment TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+    // 16. menus & menu_items
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS menus(
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        slug VARCHAR(255) UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+      `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS menu_items(
+        id SERIAL PRIMARY KEY,
+        menu_id INTEGER REFERENCES menus(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        link VARCHAR(255) NOT NULL,
+        parent_id INTEGER REFERENCES menu_items(id) ON DELETE CASCADE,
+        position INTEGER DEFAULT 0,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+      `);
+
+    // 17. stock_notifications
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS stock_notifications(
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+        email VARCHAR(255),
+        phone VARCHAR(20),
+        status VARCHAR(20) DEFAULT 'Pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, product_id, email, phone)
+      )
+      `);
+    await pool.query(`
+      DO $$
+    BEGIN 
+        IF NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name = 'stock_notifications' AND column_name = 'customer_name') THEN
+          ALTER TABLE stock_notifications ADD COLUMN customer_name VARCHAR(255);
+        END IF;
+      END $$;
+    `);
+    await pool.query(`ALTER TABLE stock_notifications ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES users(id); `);
+
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS wallet_transactions(
+      id SERIAL PRIMARY KEY,
+      vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      transaction_type VARCHAR(50) NOT NULL, -- 'credit', 'debit'
+        amount DECIMAL(10, 2) NOT NULL,
+      status VARCHAR(50) DEFAULT 'completed',
+      description TEXT,
+      order_id INTEGER REFERENCES orders(id),
+      payout_id INTEGER REFERENCES payouts(id),
+      platform_fee DECIMAL(10, 2) DEFAULT 0,
+      coupon_discount_applied DECIMAL(10, 2) DEFAULT 0,
+      original_amount DECIMAL(10, 2),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+      `);
+
+
+    // Add PIN verification table for users
+    // Add PIN verification table for users
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS user_pins(
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        pin_hash TEXT NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id)
+      )
+      `);
+
+    // Add PIN login attempts tracking for security
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS pin_login_attempts(
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        attempt_count INTEGER DEFAULT 0,
+        locked_until TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id)
+      )
+      `);
+
+    // Add this inside your initDatabase() function, after existing settings insertion
+
+    // Add Shiprocket settings if not exists
+    await pool.query(`
+  INSERT INTO settings(key, value)
+    VALUES
+      ('shiprocket_email', ''),
+      ('shiprocket_password', ''),
+      ('shiprocket_pickup_pincode', ''),
+      ('shiprocket_webhook_secret', '')
+  ON CONFLICT(key) DO NOTHING
+      `);
+
+
+
+    // SETTINGS TABLE
+    await pool.query(`
+          CREATE TABLE IF NOT EXISTS settings(
+        id SERIAL PRIMARY KEY,
+        key VARCHAR(100) UNIQUE NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+      `);
+
+    // Add this to your initDatabase() function, inside the settings initialization section:
+
+    // Add Shiprocket default pickup location settings
+    await pool.query(`
+      INSERT INTO settings(key, value)
+      VALUES
+        ('shiprocket_default_pickup_id', ''),
+        ('shiprocket_default_pickup_name', '')
+      ON CONFLICT(key) DO NOTHING
+    `);
+
+
+    // Add this table to initDatabase() function:
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS shiprocket_tokens(
+        id SERIAL PRIMARY KEY,
+        token TEXT NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Add index for faster lookups
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_shiprocket_tokens_expires_at ON shiprocket_tokens(expires_at)
+    `);
+
+    await pool.query(`
+        INSERT INTO settings(key, value)
+    VALUES('platform_fee_percent', '0.00')
+        ON CONFLICT(key) DO NOTHING
+      `);
+    // Ensure all platform fee percents are forced to 0.00
+    await pool.query(`
+        UPDATE settings SET value = '0.00' WHERE key = 'platform_fee_percent';
+        UPDATE products SET platform_fee_percent = 0.00;
+      `);
+
+    // In initDatabase() function, add these settings if not exists
+    await pool.query(`
+      INSERT INTO settings(key, value)
+    VALUES
+      ('razorpay_key_id', ''),
+      ('razorpay_key_secret', '')
+      ON CONFLICT(key) DO NOTHING
+      `);
+
+
+    // Add dashboard banner settings
+    await pool.query(`
+      INSERT INTO settings(key, value)
+      VALUES
+        ('dashboard_banner_url', ''),
+        ('dashboard_banner_alt', 'Dashboard Banner'),
+        ('dashboard_banner_link', '')
+      ON CONFLICT(key) DO NOTHING
+    `);
+
+    const defaultSettings = [
+      { key: 'online_payment_discount', value: '0' },
+      { key: 'cod_fee', value: '0' }
+    ];
+
+    for (const setting of defaultSettings) {
+      await pool.query(`
+        INSERT INTO settings(key, value)
+    VALUES($1, $2)
+        ON CONFLICT(key) DO NOTHING
+      `, [setting.key, setting.value]);
+    }
+
+    // SILENT SEED
+    const adminEmail = (process.env.ADMIN_EMAIL || "admin@example.com").toLowerCase().trim();
+    const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || "Admin@123";
+
+    const userWithEmail = await pool.query("SELECT * FROM users WHERE LOWER(email) = $1", [adminEmail]);
+
+    if (userWithEmail.rows.length > 0) {
+      const existingUser = userWithEmail.rows[0];
+      if (existingUser.role?.toLowerCase() !== 'super_admin') {
+        await pool.query("UPDATE users SET role = 'super_admin' WHERE id = $1", [existingUser.id]);
+        console.log(`✅ User ${adminEmail} promoted to super_admin`);
+      }
+      const hashedPassword = await bcrypt.hash(defaultAdminPassword, 10);
+      await pool.query("UPDATE users SET password = $1 WHERE id = $2", [hashedPassword, existingUser.id]);
+    } else {
+      const hashedPassword = await bcrypt.hash(defaultAdminPassword, 10);
+      await pool.query(`
+        INSERT INTO users(name, email, password, role, status)
+    VALUES($1, $2, $3, $4, $5)
+      `, ["Super Admin", adminEmail, hashedPassword, "super_admin", "Active"]);
+    }
+
+  } catch (error) {
+    console.error("❌ Database initialization error:", error);
+  }
+};
+
+// ================= AUTH ROUTES =================
+// ================= REGISTRATION ENDPOINT WITH PIN =================
+app.post("/api/auth/register", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const {
+      name,
+      email,
+      password,
+      phone,
+      setPin,     // optional: boolean to set PIN during registration
+      pin         // optional: 4-digit PIN if setPin is true
+    } = req.body;
+
+    // Validate required fields
+    if (!name || name.length < 3) {
+      return res.status(400).json({
+        success: false,
+        message: "Name must be at least 3 characters"
+      });
+    }
+
+    if (!email && !phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Either email or phone number is required"
+      });
+    }
+
+    // Validate email if provided
+    if (email && !validator.isEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format"
+      });
+    }
+
+    // Validate password if provided (for email registration)
+    if (email && password) {
+      if (!validator.isStrongPassword(password, {
+        minLength: 8,
+        minLowercase: 1,
+        minUppercase: 1,
+        minNumbers: 1,
+        minSymbols: 1
+      })) {
+        return res.status(400).json({
+          success: false,
+          message: "Password must contain uppercase, lowercase, number and symbol"
+        });
+      }
+    }
+
+    // Validate phone if provided
+    if (phone && !validator.isMobilePhone(phone, 'any')) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid phone number format"
+      });
+    }
+
+    // Validate PIN if being set
+    if (setPin && pin) {
+      if (!/^\d{4}$/.test(pin)) {
+        return res.status(400).json({
+          success: false,
+          message: "PIN must be exactly 4 digits"
+        });
+      }
+    }
+
+    // Check if user already exists
+    let existingUserQuery = "SELECT * FROM users WHERE";
+    let existingParams = [];
+    let conditions = [];
+
+    if (email) {
+      conditions.push(` LOWER(email) = $${existingParams.length + 1} `);
+      existingParams.push(email.toLowerCase());
+    }
+    if (phone) {
+      if (conditions.length > 0) existingUserQuery += " OR";
+      conditions.push(` phone = $${existingParams.length + 1} `);
+      existingParams.push(phone);
+    }
+
+    existingUserQuery += conditions.join(" OR");
+
+    const userExists = await pool.query(existingUserQuery, existingParams);
+    if (userExists.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "User with this email or phone already exists"
+      });
+    }
+
+    // Parse name into first and last name
+    const [first_name, ...rest] = name.trim().split(" ");
+    const last_name = rest.join(" ");
+
+    // Hash password if provided
+    let hashedPassword = null;
+    if (password) {
+      hashedPassword = await bcrypt.hash(password, 10);
+    }
+
+    await client.query("BEGIN");
+
+    // Insert user
+    const newUser = await client.query(
+      `INSERT INTO users(name, email, password, phone, first_name, last_name, status, role, created_at)
+    VALUES($1, $2, $3, $4, $5, $6, 'Active', 'user', NOW()) 
+       RETURNING id, name, email, phone, first_name, last_name, role, status`,
+      [name, email || null, hashedPassword, phone || null, first_name, last_name]
+    );
+
+    const userId = newUser.rows[0].id;
+
+    // Set PIN if requested
+    let pinSet = false;
+    if (setPin && pin) {
+      const hashedPin = await bcrypt.hash(pin, 10);
+      await client.query(
+        `INSERT INTO user_pins(user_id, pin_hash, is_active, created_at)
+    VALUES($1, $2, true, NOW())`,
+        [userId, hashedPin]
+      );
+      pinSet = true;
+    }
+
+    await client.query("COMMIT");
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: userId, role: "user" },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    // Send welcome email if SendGrid is configured
+    if (process.env.SENDGRID_API_KEY && email) {
+      try {
+        const msg = {
+          to: email,
+          from: process.env.FROM_EMAIL,
+          subject: "Welcome to Jayastra Store!",
+          html: `
+      < div style = "font-family: Arial, sans-serif; padding: 20px;" >
+              <h2 style="color: #8E2139;">Welcome ${name}!</h2>
+              <p>Thank you for registering with Jayastra Store.</p>
+              ${pinSet ? '<p>Your PIN has been set up successfully for quick login.</p>' : ''}
+              <p>Start shopping and enjoy exclusive offers!</p>
+              <a href="${process.env.FRONTEND_URL}" style="background: #8E2139; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Shop Now</a>
+            </div >
+  `,
+        };
+        await sgMail.send(msg);
+      } catch (emailErr) {
+        console.error("Welcome email failed:", emailErr.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: pinSet ? "User registered successfully with PIN" : "User registered successfully",
+      token,
+      user: {
+        id: newUser.rows[0].id,
+        name: newUser.rows[0].name,
+        email: newUser.rows[0].email,
+        phone: newUser.rows[0].phone,
+        role: "user",
+        hasPin: pinSet
+      }
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Registration error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Registration failed",
+      message: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// ================= SIMPLE LOGIN (PHONE ONLY) WITH PIN SUPPORT =================
+app.post("/api/auth/simple-login", async (req, res) => {
+  try {
+    const { phone, name, usePin, pin } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required"
+      });
+    }
+
+    const cleanPhone = phone.replace(/\s+/g, "");
+
+    // Find user by phone
+    let userResult = await pool.query(
+      "SELECT * FROM users WHERE phone = $1",
+      [cleanPhone]
+    );
+
+    let user;
+    let isNewUser = false;
+
+    if (userResult.rows.length === 0) {
+      // New user registration
+      if (!name) {
+        return res.status(400).json({
+          success: false,
+          message: "User not found, please provide name to register"
+        });
+      }
+
+      if (name.length < 3) {
+        return res.status(400).json({
+          success: false,
+          message: "Name must be at least 3 characters"
+        });
+      }
+
+      const [first_name, ...rest] = name.trim().split(" ");
+      const last_name = rest.join(" ");
+
+      const newUserRes = await pool.query(
+        `INSERT INTO users(name, phone, first_name, last_name, role, status)
+VALUES($1, $2, $3, $4, 'user', 'Active')
+RETURNING * `,
+        [name, cleanPhone, first_name, last_name]
+      );
+
+      user = newUserRes.rows[0];
+      isNewUser = true;
+    } else {
+      user = userResult.rows[0];
+
+      // Check if user is blocked
+      if (user.status === 'Blocked') {
+        return res.status(403).json({
+          success: false,
+          message: "Your account has been blocked. Please contact support."
+        });
+      }
+    }
+
+    // Handle PIN login for existing users
+    if (!isNewUser && usePin) {
+      if (!pin || !/^\d{4}$/.test(pin)) {
+        return res.status(400).json({
+          success: false,
+          message: "PIN must be exactly 4 digits"
+        });
+      }
+
+      // Check PIN login attempts
+      const attemptsResult = await pool.query(
+        "SELECT * FROM pin_login_attempts WHERE user_id = $1",
+        [user.id]
+      );
+
+      let attempts = attemptsResult.rows[0];
+
+      if (attempts && attempts.locked_until && new Date(attempts.locked_until) > new Date()) {
+        const minutesLeft = Math.ceil((new Date(attempts.locked_until) - new Date()) / (1000 * 60));
+        return res.status(429).json({
+          success: false,
+          message: `Too many failed attempts.Login with Credentials.`,
+          locked: true,
+          minutesLeft
+        });
+      }
+
+      // Get user's PIN
+      const pinResult = await pool.query(
+        "SELECT pin_hash FROM user_pins WHERE user_id = $1 AND is_active = true",
+        [user.id]
+      );
+
+      if (pinResult.rows.length === 0) {
+        return res.status(401).json({
+          success: false,
+          message: "No PIN set for this account. Please login without PIN."
+        });
+      }
+
+      // Verify PIN
+      const isValid = await bcrypt.compare(pin, pinResult.rows[0].pin_hash);
+
+      if (!isValid) {
+        let newAttemptCount = 1;
+        let lockedUntil = null;
+
+        if (attempts) {
+          newAttemptCount = attempts.attempt_count + 1;
+
+          if (newAttemptCount >= 5) {
+            lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+
+            await pool.query(
+              `UPDATE pin_login_attempts 
+               SET attempt_count = $1, locked_until = $2, updated_at = NOW() 
+               WHERE user_id = $3`,
+              [newAttemptCount, lockedUntil, user.id]
+            );
+
+            return res.status(429).json({
+              success: false,
+              message: "Too many failed attempts. Login with Credentials.",
+              locked: true,
+              minutesLeft: 15
+            });
+          } else {
+            await pool.query(
+              `UPDATE pin_login_attempts 
+               SET attempt_count = $1, updated_at = NOW() 
+               WHERE user_id = $2`,
+              [newAttemptCount, user.id]
+            );
+          }
+        } else {
+          await pool.query(
+            `INSERT INTO pin_login_attempts(user_id, attempt_count) VALUES($1, $2)`,
+            [user.id, 1]
+          );
+        }
+
+        return res.status(401).json({
+          success: false,
+          message: `Invalid PIN or Not Registered.`,
+          attemptsLeft: 5 - newAttemptCount
+        });
+      }
+
+      // Reset attempts on successful login
+      await pool.query(
+        `DELETE FROM pin_login_attempts WHERE user_id = $1`,
+        [user.id]
+      );
+    }
+
+    // Generate token
+    const role = user.role ? user.role.toLowerCase() : "user";
+    const token = jwt.sign(
+      { id: user.id, role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    // Check if user has PIN set
+    const pinCheck = await pool.query(
+      "SELECT id FROM user_pins WHERE user_id = $1 AND is_active = true",
+      [user.id]
+    );
+    const hasPin = pinCheck.rows.length > 0;
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role,
+        hasPin,
+        isNewUser
+      },
+      message: isNewUser ? "Registration successful" : (usePin ? "PIN login successful" : "Login successful")
+    });
+
+  } catch (error) {
+    console.error("Simple login error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Authentication failed",
+      message: error.message
+    });
+  }
+});
+// ================= LOGIN ENDPOINT WITH PIN CHECK =================
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    let { identifier, password, usePin, pin } = req.body;
+
+    if (!identifier) {
+      return res.status(400).json({
+        success: false,
+        message: "Email or phone number is required"
+      });
+    }
+
+    identifier = identifier.trim();
+
+    // Find user by email or phone
+    let userResult;
+    if (validator.isEmail(identifier)) {
+      userResult = await pool.query(
+        "SELECT * FROM users WHERE LOWER(email) = $1",
+        [identifier.toLowerCase()]
+      );
+    } else {
+      const phone = identifier.replace(/\s+/g, "");
+      userResult = await pool.query(
+        "SELECT * FROM users WHERE phone = $1",
+        [phone]
+      );
+    }
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email/phone or credentials"
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    // Check if user is blocked
+    if (user.status === 'Blocked') {
+      return res.status(403).json({
+        success: false,
+        message: "Your account has been blocked. Please contact support."
+      });
+    }
+
+    // Handle PIN login
+    if (usePin) {
+      if (!pin || !/^\d{4}$/.test(pin)) {
+        return res.status(400).json({
+          success: false,
+          message: "PIN must be exactly 4 digits"
+        });
+      }
+
+      // Check PIN login attempts
+      const attemptsResult = await pool.query(
+        "SELECT * FROM pin_login_attempts WHERE user_id = $1",
+        [user.id]
+      );
+
+      let attempts = attemptsResult.rows[0];
+
+      if (attempts && attempts.locked_until && new Date(attempts.locked_until) > new Date()) {
+        const minutesLeft = Math.ceil((new Date(attempts.locked_until) - new Date()) / (1000 * 60));
+        return res.status(429).json({
+          success: false,
+          message: `Too many failed attempts.Login with Credentials.`,
+          locked: true,
+          minutesLeft
+        });
+      }
+
+      // Get user's PIN
+      const pinResult = await pool.query(
+        "SELECT pin_hash FROM user_pins WHERE user_id = $1 AND is_active = true",
+        [user.id]
+      );
+
+      if (pinResult.rows.length === 0) {
+        return res.status(401).json({
+          success: false,
+          message: "No PIN set for this account. Please use password login."
+        });
+      }
+
+      // Verify PIN
+      const isValid = await bcrypt.compare(pin, pinResult.rows[0].pin_hash);
+
+      if (!isValid) {
+        // Update failed attempts
+        let newAttemptCount = 1;
+        let lockedUntil = null;
+
+        if (attempts) {
+          newAttemptCount = attempts.attempt_count + 1;
+
+          // Lock after 5 failed attempts for 15 minutes
+          if (newAttemptCount >= 5) {
+            lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+
+            await pool.query(
+              `UPDATE pin_login_attempts 
+               SET attempt_count = $1, locked_until = $2, updated_at = NOW() 
+               WHERE user_id = $3`,
+              [newAttemptCount, lockedUntil, user.id]
+            );
+
+            return res.status(429).json({
+              success: false,
+              message: "Too many failed attempts. Login with Credentials.",
+              locked: true,
+              minutesLeft: 15
+            });
+          } else {
+            await pool.query(
+              `UPDATE pin_login_attempts 
+               SET attempt_count = $1, updated_at = NOW() 
+               WHERE user_id = $2`,
+              [newAttemptCount, user.id]
+            );
+          }
+        } else {
+          await pool.query(
+            `INSERT INTO pin_login_attempts(user_id, attempt_count) VALUES($1, $2)`,
+            [user.id, 1]
+          );
+        }
+
+        return res.status(401).json({
+          success: false,
+          message: `Invalid PIN or Not Registered.`,
+          attemptsLeft: 5 - newAttemptCount
+        });
+      }
+
+      // Reset attempts on successful login
+      await pool.query(
+        `DELETE FROM pin_login_attempts WHERE user_id = $1`,
+        [user.id]
+      );
+
+      // Generate token
+      const role = user.role ? user.role.toLowerCase() : "user";
+      const token = jwt.sign(
+        { id: user.id, role },
+        JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      return res.json({
+        success: true,
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          role,
+          hasPin: true
+        },
+        message: "PIN login successful"
+      });
+    }
+
+    // Handle password login
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: "Password is required"
+      });
+    }
+
+    // Check if user has password set
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        message: "No password set for this account. Please use phone login or reset password."
+      });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email/phone or password"
+      });
+    }
+
+    // Check if user has PIN set (to return this info to frontend)
+    const pinCheck = await pool.query(
+      "SELECT id FROM user_pins WHERE user_id = $1 AND is_active = true",
+      [user.id]
+    );
+    const hasPin = pinCheck.rows.length > 0;
+
+    const role = user.role ? user.role.toLowerCase() : "user";
+    const token = jwt.sign(
+      { id: user.id, role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role,
+        hasPin
+      },
+      message: "Login successful"
+    });
+
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Login failed",
+      message: error.message
+    });
+  }
+});
+// ================= GOOGLE LOGIN WITH PIN SUPPORT =================
+app.post("/api/auth/google-login", async (req, res) => {
+  try {
+    const { name, email, setPin, pin } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required for Google login"
+      });
+    }
+
+    // Validate PIN if being set
+    if (setPin && pin) {
+      if (!/^\d{4}$/.test(pin)) {
+        return res.status(400).json({
+          success: false,
+          message: "PIN must be exactly 4 digits"
+        });
+      }
+    }
+
+    const [first_name, ...rest] = (name || "User").split(" ");
+    const last_name = rest.join(" ");
+
+    // Check if user exists
+    let user = await pool.query(
+      "SELECT * FROM users WHERE LOWER(email) = $1",
+      [email.toLowerCase()]
+    );
+
+    let isNewUser = false;
+    let userId;
+
+    if (user.rows.length === 0) {
+      // Create new user
+      const newUser = await pool.query(
+        `INSERT INTO users(name, email, password, first_name, last_name, role, status, provider, created_at)
+VALUES($1, $2, $3, $4, $5, 'user', 'Active', 'google', NOW())
+RETURNING * `,
+        [name || "User", email.toLowerCase(), "google_auth", first_name, last_name]
+      );
+      user = newUser;
+      isNewUser = true;
+      userId = newUser.rows[0].id;
+    } else {
+      userId = user.rows[0].id;
+
+      // Update provider if not set
+      if (!user.rows[0].provider) {
+        await pool.query(
+          "UPDATE users SET provider = 'google' WHERE id = $1",
+          [userId]
+        );
+      }
+    }
+
+    // Set PIN if requested
+    let pinSet = false;
+    if (setPin && pin) {
+      const hashedPin = await bcrypt.hash(pin, 10);
+
+      // Check if PIN already exists
+      const existingPin = await pool.query(
+        "SELECT id FROM user_pins WHERE user_id = $1",
+        [userId]
+      );
+
+      if (existingPin.rows.length > 0) {
+        await pool.query(
+          `UPDATE user_pins 
+           SET pin_hash = $1, is_active = true, updated_at = NOW() 
+           WHERE user_id = $2`,
+          [hashedPin, userId]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO user_pins(user_id, pin_hash, is_active, created_at)
+VALUES($1, $2, true, NOW())`,
+          [userId, hashedPin]
+        );
+      }
+      pinSet = true;
+    }
+
+    // Generate token
+    const role = user.rows[0]?.role ? user.rows[0].role.toLowerCase() : "user";
+    const token = jwt.sign(
+      { id: userId, role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    // Check if user has PIN set
+    const pinCheck = await pool.query(
+      "SELECT id FROM user_pins WHERE user_id = $1 AND is_active = true",
+      [userId]
+    );
+    const hasPin = pinCheck.rows.length > 0;
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: userId,
+        name: user.rows[0]?.name || name,
+        email: email.toLowerCase(),
+        role,
+        hasPin,
+        isNewUser
+      },
+      message: isNewUser ? "Google registration successful" : (pinSet ? "Google login with PIN setup successful" : "Google login successful")
+    });
+
+  } catch (error) {
+    console.error("Google login error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Google authentication failed",
+      message: error.message
+    });
+  }
+});
+
+// ================= ADMIN WISHLIST ROUTES =================
+app.get("/api/admin/wishlist", verifyToken, verifyAnyAdmin, async (req, res) => {
+  try {
+    let query = `
+      SELECT w.id as wishlist_entry_id, w.user_id, w.product_id, w.created_at, u.name as user_name, u.phone as user_phone, p.name as product_name, p.main_image_url as product_image, p.price, p.stock_quantity
+      FROM wishlist w
+      JOIN users u ON w.user_id = u.id
+      JOIN products p ON w.product_id = p.id
+      WHERE 1 = 1
+  `;
+    let params = [];
+    if (req.user.role !== 'super_admin') {
+      query += ` AND p.vendor_id = $1`;
+      params.push(req.user.id);
+    }
+    query += ` ORDER BY w.created_at DESC`;
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, wishlist: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+app.delete("/api/admin/wishlist/:id", verifyToken, verifyAnyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query("DELETE FROM wishlist WHERE id = $1", [id]);
+    res.json({ success: true, message: "Wishlist entry removed" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// ================= PROFILE / ADDRESS ROUTES =================
+app.get("/api/user/profile", verifyToken, async (req, res) => {
+  try {
+    const user = await pool.query(
+      `SELECT
+id, first_name, last_name, email, phone, gender,
+  address, city, state, pincode, balance,
+  store_name, gst_number, store_active,
+  pickup_address_line1, pickup_address_line2,
+  pickup_city, pickup_state, pickup_pincode,
+  pickup_location_name
+      FROM users 
+      WHERE id = $1`,
+      [req.user.id]
+    );
+
+    if (user.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json(user.rows[0]);
+  } catch (error) {
+    console.error("Profile fetch error:", error);
+    res.status(500).json({ message: "Failed to fetch profile" });
+  }
+});
+
+app.put("/api/user/profile", verifyToken, async (req, res) => {
+  const { first_name, last_name, gender, address, city, state, pincode } = req.body;
+  const fullName = `${first_name} ${last_name} `.trim();
+  const result = await pool.query(
+    `UPDATE users SET first_name = $1, last_name = $2, name = $3, gender = $4, address = $5, city = $6, state = $7, pincode = $8 WHERE id = $9 RETURNING * `,
+    [first_name, last_name, fullName || "User", gender, address, city, state, pincode, req.user.id]
+  );
+  res.json(result.rows[0]);
+});
+
+app.post("/api/user/address", verifyToken, async (req, res) => {
+  try {
+    const { name, phone, address, city, state, pincode, type } = req.body;
+    let finalAddress = address;
+    if (!finalAddress && req.body.house_no && req.body.street_area) {
+      finalAddress = `${req.body.house_no}, ${req.body.street_area} `;
+    }
+    if (!name || !phone || !finalAddress) return res.status(400).json({ message: "Required fields missing" });
+    const result = await pool.query(
+      `INSERT INTO addresses(user_id, name, phone, address, city, state, pincode, type, house_no, street_area, landmark) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING * `,
+      [req.user.id, name, phone, finalAddress, city, state, pincode, type || "HOME", req.body.house_no || "", req.body.street_area || "", req.body.landmark || ""]
+    );
+    res.json({ success: true, message: "Address saved successfully", address: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to save address" });
+  }
+});
+
+app.get("/api/user/address", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM addresses WHERE user_id=$1 ORDER BY id DESC", [req.user.id]);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch addresses" });
+  }
+});
+
+app.put("/api/user/address/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, phone, address, city, state, pincode, type } = req.body;
+    let finalAddress = address;
+    if (!finalAddress && req.body.house_no && req.body.street_area) finalAddress = `${req.body.house_no}, ${req.body.street_area} `;
+    if (!name || !phone || !finalAddress) return res.status(400).json({ message: "Required fields missing" });
+    const result = await pool.query(
+      `UPDATE addresses SET name = $1, phone = $2, address = $3, city = $4, state = $5, pincode = $6, type = $7, house_no = $8, street_area = $9, landmark = $10 WHERE id = $11 AND user_id = $12 RETURNING * `,
+      [name, phone, finalAddress, city, state, pincode, type || "HOME", req.body.house_no || "", req.body.street_area || "", req.body.landmark || "", id, req.user.id]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: "Update failed" });
+  }
+});
+
+app.delete("/api/user/address/:id", verifyToken, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM addresses WHERE id=$1 AND user_id=$2", [req.params.id, req.user.id]);
+    res.json({ message: "Address deleted" });
+  } catch (error) {
+    res.status(500).json({ message: "Delete failed" });
+  }
+});
+
+// Combined profile update for all user types
+app.put("/api/user/profile/all", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const {
+      // Personal fields
+      first_name,
+      last_name,
+      gender,
+      address,
+      city,
+      state,
+      pincode,
+      // Vendor fields
+      store_name,
+      gst_number,
+      store_active,
+      pickup_address_line1,
+      pickup_address_line2,
+      pickup_city,
+      pickup_state,
+      pickup_pincode,
+      pickup_location_name
+    } = req.body;
+
+    // Build dynamic update query
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    const addField = (field, value) => {
+      if (value !== undefined) {
+        updates.push(`${field} = $${paramCount++} `);
+        values.push(value);
+      }
+    };
+
+    addField('first_name', first_name);
+    addField('last_name', last_name);
+    addField('gender', gender);
+    addField('address', address);
+    addField('city', city);
+    addField('state', state);
+    addField('pincode', pincode);
+    addField('store_name', store_name);
+    addField('gst_number', gst_number);
+    addField('store_active', store_active);
+    addField('pickup_address_line1', pickup_address_line1);
+    addField('pickup_address_line2', pickup_address_line2);
+    addField('pickup_city', pickup_city);
+    addField('pickup_state', pickup_state);
+    addField('pickup_pincode', pickup_pincode);
+    addField('pickup_location_name', pickup_location_name);
+
+    // Also update the full name
+    if (first_name || last_name) {
+      const currentUser = await pool.query(
+        "SELECT first_name, last_name FROM users WHERE id = $1",
+        [userId]
+      );
+      const newFirstName = first_name || currentUser.rows[0].first_name;
+      const newLastName = last_name || currentUser.rows[0].last_name;
+      const fullName = `${newFirstName} ${newLastName} `.trim();
+      addField('name', fullName);
+    }
+
+    updates.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(userId);
+
+    if (updates.length === 1) {
+      return res.status(400).json({ message: "No fields to update" });
+    }
+
+    const query = `
+      UPDATE users 
+      SET ${updates.join(", ")} 
+      WHERE id = $${paramCount}
+RETURNING *
+  `;
+
+    const result = await pool.query(query, values);
+
+    res.json({
+      success: true,
+      message: "Profile updated successfully",
+      user: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Profile update error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update profile"
+    });
+  }
+});
+
+// ================= VENDOR PICKUP ADDRESS =================
+// ================= VENDOR PICKUP ADDRESSES (COMPLETE) =================
+
+// Get all pickup addresses for the vendor
+app.get("/api/vendor/pickup-addresses", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM vendor_pickup_addresses 
+       WHERE vendor_id = $1 
+       ORDER BY is_default DESC, created_at DESC`,
+      [req.user.id]
+    );
+    res.json({ success: true, addresses: result.rows });
+  } catch (error) {
+    console.error("Fetch addresses error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch addresses" });
+  }
+});
+
+// Create pickup address and sync with Shiprocket
+app.post("/api/vendor/pickup-addresses", verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { location_name, address_line1, address_line2, city, state, pincode, is_default } = req.body;
+
+    if (!location_name || !address_line1 || !city || !state || !pincode) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields"
+      });
+    }
+
+    // Validate address format for Shiprocket
+    if (!address_line1.match(/[0-9]/) || address_line1.length < 10) {
+      return res.status(400).json({
+        success: false,
+        message: "Address line 1 should include house/flat/road number and be at least 10 characters long."
+      });
+    }
+
+    await client.query("BEGIN");
+
+    if (is_default) {
+      await client.query(
+        `UPDATE vendor_pickup_addresses SET is_default = false WHERE vendor_id = $1`,
+        [req.user.id]
+      );
+    }
+
+    const result = await client.query(
+      `INSERT INTO vendor_pickup_addresses
+        (vendor_id, location_name, address_line1, address_line2, city, state, pincode, is_default)
+       VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [req.user.id, location_name, address_line1, address_line2 || null, city, state, pincode, is_default || false]
+    );
+
+    const newAddress = result.rows[0];
+
+    // Sync with Shiprocket
+    let shiprocketPickupId = null;
+    let shiprocketError = null;
+
+    try {
+      const token = await authenticateShiprocket();
+
+      // Format address properly
+      let formattedAddress = address_line1;
+      if (!formattedAddress.match(/[0-9]/)) {
+        formattedAddress = `${location_name}, ${address_line1}`;
+      }
+
+      const payload = {
+        pickup_location: location_name,
+        name: location_name,
+        email: req.user.email || "jayastrastore@gmail.com",
+        phone: req.user.phone || "9652896180",
+        address: formattedAddress,
+        address_2: address_line2 || "",
+        city: city,
+        state: state,
+        pincode: pincode,
+        country: "India"
+      };
+
+      console.log("📦 Creating Shiprocket pickup with payload:", JSON.stringify(payload, null, 2));
+
+      const response = await fetch("https://apiv2.shiprocket.in/v1/external/settings/company/addpickup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const responseText = await response.text();
+      let shiprocketResult = {};
+      try {
+        shiprocketResult = JSON.parse(responseText);
+      } catch (e) {
+        console.error("Failed to parse Shiprocket response:", responseText);
+      }
+
+      console.log("📡 Shiprocket response:", shiprocketResult);
+
+      const pickupId = shiprocketResult.pickup_id ||
+        shiprocketResult.data?.pickup_id ||
+        shiprocketResult.data?.pickup_location_id ||
+        shiprocketResult.data?.id;
+
+      if (response.ok && (pickupId || shiprocketResult.success || shiprocketResult.data)) {
+        shiprocketPickupId = pickupId || shiprocketResult.data?.id || shiprocketResult.data?.pickup_location_id;
+
+        if (shiprocketPickupId) {
+          await client.query(
+            `UPDATE vendor_pickup_addresses 
+             SET shiprocket_pickup_id = $1, shiprocket_synced = true, updated_at = NOW() 
+             WHERE id = $2`,
+            [shiprocketPickupId.toString(), newAddress.id]
+          );
+          newAddress.shiprocket_pickup_id = shiprocketPickupId;
+          newAddress.shiprocket_synced = true;
+        }
+      } else {
+        const errorMsg = shiprocketResult.message || "Failed to create in Shiprocket";
+        if (shiprocketResult.address) {
+          shiprocketError = `Address validation error: ${shiprocketResult.address.join(', ')}`;
+        } else {
+          shiprocketError = errorMsg + ". " + (responseText.substring(0, 150));
+        }
+      }
+    } catch (err) {
+      shiprocketError = err.message;
+      console.error("Shiprocket sync error:", err);
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      success: true,
+      address: newAddress,
+      shiprocket_synced: !!shiprocketPickupId,
+      shiprocket_pickup_id: shiprocketPickupId,
+      shiprocket_error: shiprocketError || null,
+      message: shiprocketPickupId ? "Address created and synced with Shiprocket!" : "Address created but Shiprocket sync failed. Please ensure address includes house/flat number."
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Create address error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Update pickup address and sync with Shiprocket
+app.put("/api/vendor/pickup-addresses/:id", verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const { location_name, address_line1, address_line2, city, state, pincode, is_default } = req.body;
+
+    // Check ownership
+    const check = await client.query(
+      `SELECT id, shiprocket_pickup_id FROM vendor_pickup_addresses WHERE id = $1 AND vendor_id = $2`,
+      [id, req.user.id]
+    );
+    if (check.rows.length === 0) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    const oldAddress = check.rows[0];
+    const hasShiprocketId = oldAddress.shiprocket_pickup_id;
+
+    await client.query("BEGIN");
+
+    if (is_default) {
+      await client.query(
+        `UPDATE vendor_pickup_addresses SET is_default = false WHERE vendor_id = $1 AND id != $2`,
+        [req.user.id, id]
+      );
+    }
+
+    const result = await client.query(
+      `UPDATE vendor_pickup_addresses SET
+         location_name = $1,
+         address_line1 = $2,
+         address_line2 = $3,
+         city = $4,
+         state = $5,
+         pincode = $6,
+         is_default = $7,
+         updated_at = NOW()
+       WHERE id = $8 AND vendor_id = $9
+       RETURNING *`,
+      [location_name, address_line1, address_line2 || null, city, state, pincode, is_default || false, id, req.user.id]
+    );
+
+    const updatedAddress = result.rows[0];
+    let shiprocketUpdated = false;
+    let shiprocketError = null;
+
+    // Update in Shiprocket if it has an ID
+    if (hasShiprocketId) {
+      try {
+        const token = await authenticateShiprocket();
+
+        const payload = {
+          pickup_location: location_name,
+          name: location_name,
+          email: req.user.email || "jayastrastore@gmail.com",
+          phone: req.user.phone || "9652896180",
+          address: address_line1,
+          address_2: address_line2 || "",
+          city: city,
+          state: state,
+          pincode: pincode,
+          country: "India"
+        };
+
+        // Shiprocket doesn't have a direct PUT endpoint, so we need to update by creating new and deleting old
+        // Or we can use their edit endpoint if available
+        const response = await fetch(`https://apiv2.shiprocket.in/v1/external/settings/company/pickup/${hasShiprocketId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const responseText = await response.text();
+        if (response.ok) {
+          shiprocketUpdated = true;
+          await client.query(
+            `UPDATE vendor_pickup_addresses SET shiprocket_synced = true WHERE id = $1`,
+            [id]
+          );
+        } else {
+          let errorMsg = "Failed to update in Shiprocket";
+          try {
+            const errorData = JSON.parse(responseText);
+            errorMsg = errorData.message || errorMsg;
+          } catch (e) {
+            errorMsg = responseText ? responseText.substring(0, 150) : errorMsg;
+          }
+          shiprocketError = errorMsg;
+        }
+      } catch (err) {
+        shiprocketError = err.message;
+      }
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      success: true,
+      address: updatedAddress,
+      shiprocket_updated: shiprocketUpdated,
+      shiprocket_error: shiprocketError || null,
+      message: shiprocketUpdated ? "Address updated and synced with Shiprocket!" : "Address updated but Shiprocket sync failed."
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Update address error:", error);
+    res.status(500).json({ success: false, message: "Update failed" });
+  } finally {
+    client.release();
+  }
+});
+
+// Delete pickup address and remove from Shiprocket
+app.delete("/api/vendor/pickup-addresses/:id", verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+
+    const check = await client.query(
+      `SELECT id, is_default, shiprocket_pickup_id FROM vendor_pickup_addresses WHERE id = $1 AND vendor_id = $2`,
+      [id, req.user.id]
+    );
+    if (check.rows.length === 0) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    const address = check.rows[0];
+    const isDefault = address.is_default;
+    const shiprocketPickupId = address.shiprocket_pickup_id;
+
+    await client.query("BEGIN");
+
+    // Delete from Shiprocket if it exists
+    let shiprocketDeleted = false;
+    let shiprocketError = null;
+
+    if (shiprocketPickupId) {
+      try {
+        const token = await authenticateShiprocket();
+
+        const response = await fetch(`https://apiv2.shiprocket.in/v1/external/settings/company/pickup/${shiprocketPickupId}`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          }
+        });
+
+        if (response.ok) {
+          shiprocketDeleted = true;
+        } else {
+          const errorData = await response.json();
+          shiprocketError = errorData.message || "Failed to delete from Shiprocket";
+          console.warn("Shiprocket delete warning:", shiprocketError);
+        }
+      } catch (err) {
+        shiprocketError = err.message;
+        console.warn("Shiprocket delete error:", shiprocketError);
+      }
+    }
+
+    // Delete from database
+    await client.query(`DELETE FROM vendor_pickup_addresses WHERE id = $1`, [id]);
+
+    // If this was the default address, set another as default
+    if (isDefault) {
+      const newDefault = await client.query(
+        `SELECT id FROM vendor_pickup_addresses WHERE vendor_id = $1 ORDER BY created_at ASC LIMIT 1`,
+        [req.user.id]
+      );
+      if (newDefault.rows.length > 0) {
+        await client.query(
+          `UPDATE vendor_pickup_addresses SET is_default = true WHERE id = $1`,
+          [newDefault.rows[0].id]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      success: true,
+      message: shiprocketDeleted ? "Address deleted from both systems" : "Address deleted locally. Shiprocket deletion failed.",
+      shiprocket_deleted: shiprocketDeleted,
+      shiprocket_error: shiprocketError || null
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Delete address error:", error);
+    res.status(500).json({ success: false, message: "Delete failed" });
+  } finally {
+    client.release();
+  }
+});
+
+// Set address as default
+app.put("/api/vendor/pickup-addresses/:id/default", verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+
+    const check = await client.query(
+      `SELECT id FROM vendor_pickup_addresses WHERE id = $1 AND vendor_id = $2`,
+      [id, req.user.id]
+    );
+    if (check.rows.length === 0) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE vendor_pickup_addresses SET is_default = false WHERE vendor_id = $1`,
+      [req.user.id]
+    );
+    await client.query(
+      `UPDATE vendor_pickup_addresses SET is_default = true WHERE id = $1`,
+      [id]
+    );
+    await client.query("COMMIT");
+
+    res.json({ success: true, message: "Default address updated" });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Set default error:", error);
+    res.status(500).json({ success: false, message: "Failed to set default" });
+  } finally {
+    client.release();
+  }
+});
+
+// Sync existing address with Shiprocket (manual sync)
+app.post("/api/vendor/pickup-addresses/:id/sync", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const addressResult = await pool.query(
+      `SELECT * FROM vendor_pickup_addresses WHERE id = $1 AND vendor_id = $2`,
+      [id, req.user.id]
+    );
+
+    if (addressResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Address not found" });
+    }
+
+    const address = addressResult.rows[0];
+
+    if (address.shiprocket_synced && address.shiprocket_pickup_id) {
+      return res.json({ success: true, message: "Already synced with Shiprocket" });
+    }
+
+    const vendorResult = await pool.query(
+      `SELECT email, phone FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const vendor = vendorResult.rows[0] || {};
+
+    const token = await authenticateShiprocket();
+
+    const payload = {
+      pickup_location: address.location_name,
+      name: address.location_name,
+      email: vendor.email || "jayastrastore@gmail.com",
+      phone: vendor.phone || "9652896180",
+      address: address.address_line1,
+      address_2: address.address_line2 || "",
+      city: address.city,
+      state: address.state,
+      pincode: address.pincode,
+      country: "India"
+    };
+
+    const response = await fetch("https://apiv2.shiprocket.in/v1/external/settings/company/addpickup", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const responseText = await response.text();
+    let result = {};
+    try {
+      result = JSON.parse(responseText);
+    } catch (e) {
+      console.error("Failed to parse Shiprocket response:", responseText);
+    }
+
+    const pickupId = result.pickup_id ||
+      result.data?.pickup_id ||
+      result.data?.pickup_location_id ||
+      result.data?.id;
+
+    if (response.ok && (pickupId || result.success || result.data)) {
+      const finalPickupId = pickupId || result.data?.id || result.data?.pickup_location_id;
+
+      await pool.query(
+        `UPDATE vendor_pickup_addresses 
+         SET shiprocket_pickup_id = $1, shiprocket_synced = true, updated_at = NOW() 
+         WHERE id = $2`,
+        [finalPickupId.toString(), id]
+      );
+
+      res.json({
+        success: true,
+        message: "Address synced with Shiprocket successfully!",
+        shiprocket_pickup_id: finalPickupId
+      });
+    } else {
+      let errorMessage = result.message || "Failed to sync with Shiprocket. " + (responseText.substring(0, 150));
+      res.status(400).json({ success: false, message: errorMessage });
+    }
+
+  } catch (error) {
+    console.error("Sync error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+
+// Update vendor details (store_name, gst_number, and pickup address)
+app.put("/api/user/profile/vendor", verifyToken, async (req, res) => {
+  try {
+    const {
+      store_name,
+      gst_number,
+      pickup_address_line1,
+      pickup_address_line2,
+      pickup_city,
+      pickup_state,
+      pickup_pincode,
+      pickup_location_name
+    } = req.body;
+
+    const userId = req.user.id;
+
+    // Update all vendor fields in one query
+    const result = await pool.query(
+      `UPDATE users SET
+store_name = COALESCE($1, store_name),
+  gst_number = COALESCE($2, gst_number),
+  pickup_address_line1 = COALESCE($3, pickup_address_line1),
+  pickup_address_line2 = COALESCE($4, pickup_address_line2),
+  pickup_city = COALESCE($5, pickup_city),
+  pickup_state = COALESCE($6, pickup_state),
+  pickup_pincode = COALESCE($7, pickup_pincode),
+  pickup_location_name = COALESCE($8, pickup_location_name),
+  updated_at = CURRENT_TIMESTAMP
+      WHERE id = $9
+RETURNING
+store_name,
+  gst_number,
+  pickup_address_line1,
+  pickup_address_line2,
+  pickup_city,
+  pickup_state,
+  pickup_pincode,
+  pickup_location_name`,
+      [
+        store_name,
+        gst_number,
+        pickup_address_line1,
+        pickup_address_line2,
+        pickup_city,
+        pickup_state,
+        pickup_pincode,
+        pickup_location_name,
+        userId
+      ]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Vendor details updated successfully",
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Vendor update error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update vendor details"
+    });
+  }
+});
+
+
+// ================= USER MANAGEMENT =================
+app.get("/api/admin/users", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const users = await pool.query(`SELECT id, name, email, phone, role, status, store_active, created_at FROM users ORDER BY created_at DESC`);
+    res.json({ success: true, users: users.rows });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch users" });
+  }
+});
+
+app.put("/api/admin/users/role/:id", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await pool.query("SELECT role FROM users WHERE id=$1", [id]);
+    if (user.rows.length === 0) return res.status(404).json({ message: "User not found" });
+    const currentRole = user.rows[0].role ? user.rows[0].role.toLowerCase() : "user";
+    const newRole = currentRole === "vendor" ? "user" : "vendor";
+    await pool.query("UPDATE users SET role=$1 WHERE id=$2", [newRole, id]);
+    res.json({ success: true, message: "Role updated", role: newRole });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to update role" });
+  }
+});
+
+app.put("/api/admin/users/status/:id", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await pool.query("SELECT status FROM users WHERE id=$1", [id]);
+    if (user.rows.length === 0) return res.status(404).json({ message: "User not found" });
+    const newStatus = user.rows[0].status === "Active" ? "Blocked" : "Active";
+    await pool.query("UPDATE users SET status=$1 WHERE id=$2", [newStatus, id]);
+    res.json({ success: true, status: newStatus });
+  } catch (err) {
+    res.status(500).json({ message: "Status update failed" });
+  }
+});
+
+
+// ================= UPDATE USER (ADMIN/SUPER_ADMIN) =================
+app.put("/api/admin/users/:id", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, phone, store_name, address, city, state, pincode, gst_number } = req.body;
+
+    // 1. Check if target user exists
+    const userCheck = await pool.query("SELECT id, role FROM users WHERE id = $1", [id]);
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    const targetUser = userCheck.rows[0];
+    const currentUserRole = req.user.role?.toLowerCase();
+
+    // 2. Permission checks:
+    //    - Super Admin can edit anyone.
+    //    - Admin can edit vendors and customers, but not other admins or super_admins.
+    if (currentUserRole !== 'super_admin') {
+      const targetRole = targetUser.role?.toLowerCase();
+      if (targetRole === 'super_admin' || targetRole === 'admin') {
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to edit this user's details."
+        });
+      }
+      // Admin can edit vendors/customers only if they are not super admin
+    }
+
+    // 3. Build dynamic update query
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    const addField = (field, value) => {
+      if (value !== undefined && value !== null) {
+        updates.push(`${field} = $${paramCount++}`);
+        values.push(value);
+      }
+    };
+
+    addField('name', name);
+    addField('email', email);
+    addField('phone', phone);
+    addField('store_name', store_name);
+    addField('address', address);
+    addField('city', city);
+    addField('state', state);
+    addField('pincode', pincode);
+    addField('gst_number', gst_number);
+
+    // If email changes, ensure it's unique (except for same user)
+    if (email) {
+      const existing = await pool.query(
+        "SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2",
+        [email, id]
+      );
+      if (existing.rows.length > 0) {
+        return res.status(400).json({ success: false, message: "Email already in use by another user" });
+      }
+    }
+
+    // If phone changes, ensure it's unique
+    if (phone) {
+      const existing = await pool.query(
+        "SELECT id FROM users WHERE phone = $1 AND id != $2",
+        [phone, id]
+      );
+      if (existing.rows.length > 0) {
+        return res.status(400).json({ success: false, message: "Phone number already in use by another user" });
+      }
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: "No fields to update" });
+    }
+
+    updates.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(id);
+
+    const query = `
+      UPDATE users
+      SET ${updates.join(", ")}
+      WHERE id = $${paramCount}
+      RETURNING id, name, email, phone, role, status, store_name, address, city, state, pincode, gst_number
+    `;
+
+    const result = await pool.query(query, values);
+
+    res.json({
+      success: true,
+      message: "User updated successfully",
+      user: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Update user error:", error);
+    res.status(500).json({ success: false, message: error.message || "Update failed" });
+  }
+});
+
+// Update phone number
+app.put("/api/user/profile/phone", verifyToken, async (req, res) => {
+  try {
+    const { phone } = req.body;
+    const userId = req.user.id;
+
+    // Validate phone number
+    if (!phone) {
+      return res.status(400).json({ success: false, message: "Phone number is required" });
+    }
+
+    const phoneRegex = /^[6-9]\d{9}$/;
+    if (!phoneRegex.test(phone)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number must be 10 digits and start with 6,7,8, or 9"
+      });
+    }
+
+    // Check if phone number is already taken by another user
+    const existingUser = await pool.query(
+      "SELECT id FROM users WHERE phone = $1 AND id != $2",
+      [phone, userId]
+    );
+
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "This phone number is already registered with another account"
+      });
+    }
+
+    // Update phone number
+    await pool.query(
+      "UPDATE users SET phone = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+      [phone, userId]
+    );
+
+    res.json({
+      success: true,
+      message: "Phone number updated successfully"
+    });
+
+  } catch (error) {
+    console.error("Phone update error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update phone number"
+    });
+  }
+});
+
+app.post("/api/admin/users/create-admin", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { name, email, password, phone, store_name, role } = req.body;
+
+    if (!name || name.length < 3) return res.status(400).json({ success: false, message: "Name must be at least 3 characters" });
+    if (!email || !validator.isEmail(email)) return res.status(400).json({ success: false, message: "Valid email is required" });
+    if (!password || !validator.isStrongPassword(password, { minLength: 8, minLowercase: 1, minUppercase: 1, minNumbers: 1, minSymbols: 1 })) {
+      return res.status(400).json({ success: false, message: "Password must be strong (min 8 chars, uppercase, lowercase, number, symbol)" });
+    }
+    if (phone && !validator.isMobilePhone(phone, 'any')) return res.status(400).json({ success: false, message: "Invalid phone number" });
+
+    let finalRole = 'vendor';
+    if (role && ['admin', 'vendor', 'super_admin'].includes(role)) {
+      finalRole = role;
+    } else if (req.body.is_super_admin) {
+      finalRole = 'super_admin';
+    }
+
+    const existing = await pool.query("SELECT * FROM users WHERE LOWER(email) = $1 OR phone = $2", [email.toLowerCase(), phone]);
+    if (existing.rows.length > 0) return res.status(400).json({ success: false, message: "User with this email or phone already exists" });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const [first_name, ...rest] = name.trim().split(" ");
+    const last_name = rest.join(" ");
+
+    const result = await pool.query(
+      `INSERT INTO users(name, email, password, phone, role, first_name, last_name, status, store_name)
+VALUES($1, $2, $3, $4, $5, $6, $7, 'Active', $8)
+       RETURNING id, name, email, phone, role, status`,
+      [name, email.toLowerCase(), hashedPassword, phone, finalRole, first_name, last_name, store_name || null]
+    );
+
+    res.json({ success: true, message: "Account created successfully", user: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to create account" });
+  }
+});
+
+app.get("/api/admin/vendors", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const users = await pool.query(`
+      SELECT id, name, email, phone, role, status, created_at, store_name
+      FROM users
+      WHERE LOWER(role) = 'vendor'
+      ORDER BY created_at DESC
+  `);
+    res.json({ success: true, users: users.rows });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch vendors" });
+  }
+});
+
+app.get("/api/vendor/customers", verifyToken, verifyAnyAdmin, async (req, res) => {
+  try {
+    const users = await pool.query(`
+      SELECT u.id, u.name, u.email, u.phone, u.role, u.status, u.created_at,
+  COALESCE(orders.total_orders, 0)::int AS total_orders,
+    COALESCE(orders.total_purchase, 0)::float AS total_purchase
+      FROM users u
+      LEFT JOIN(
+      SELECT user_id, COUNT(*) AS total_orders, SUM(total_amount) AS total_purchase
+        FROM orders
+        GROUP BY user_id
+    ) orders ON u.id = orders.user_id
+      WHERE LOWER(u.role) = 'user'
+      ORDER BY u.created_at DESC
+    `);
+    res.json({ success: true, users: users.rows });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch customers" });
+  }
+});
+
+// ================= REVIEWS =================
+app.get("/api/admin/reviews", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    let query = `SELECT r.*, u.name as user_name, u.email as user_email, p.name as product_name, p.main_image_url FROM reviews r JOIN users u ON r.user_id = u.id JOIN products p ON r.product_id = p.id WHERE 1 = 1`;
+    let params = [];
+    if (req.user.role !== 'super_admin') {
+      query += ` AND p.vendor_id = $1`;
+      params.push(req.user.id);
+    }
+    query += ` ORDER BY r.created_at DESC`;
+    const result = await pool.query(query, params);
+    res.json({ success: true, reviews: result.rows });
+  } catch (error) { res.status(500).json({ message: "Failed to fetch reviews" }); }
+});
+
+app.put("/api/admin/reviews/:id/status", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      const check = await pool.query("SELECT p.vendor_id FROM reviews r JOIN products p ON r.product_id = p.id WHERE r.id = $1", [req.params.id]);
+      if (check.rows.length === 0 || check.rows[0].vendor_id !== req.user.id) {
+        return res.status(403).json({ success: false, message: "Unauthorized" });
+      }
+    }
+    const { status } = req.body;
+    const result = await pool.query("UPDATE reviews SET status=$1, updated_at=CURRENT_TIMESTAMP WHERE id=$2 RETURNING *", [status, req.params.id]);
+    res.json({ success: true, review: result.rows[0] });
+  } catch (error) { res.status(500).json({ message: "Failed to update review status" }); }
+});
+
+app.delete("/api/admin/reviews/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      const check = await pool.query("SELECT p.vendor_id FROM reviews r JOIN products p ON r.product_id = p.id WHERE r.id = $1", [req.params.id]);
+      if (check.rows.length === 0 || check.rows[0].vendor_id !== req.user.id) {
+        return res.status(403).json({ success: false, message: "Unauthorized" });
+      }
+    }
+    await pool.query("DELETE FROM reviews WHERE id = $1", [req.params.id]);
+    res.json({ success: true, message: "Review deleted successfully" });
+  } catch (error) { res.status(500).json({ success: false, message: "Failed to delete review" }); }
+});
+
+// ================= CATEGORIES =================
+// ================= CATEGORIES (GLOBAL) =================
+
+// Create category - Any authenticated admin/vendor can create
+app.post("/api/admin/categories", verifyToken, verifyAdminVendorIndividualAccess, upload.single("image"), async (req, res) => {
+  try {
+    const { name, description, is_active } = req.body;
+
+    if (!name || name.trim() === "") {
+      return res.status(400).json({ message: "Category name is required" });
+    }
+
+    // Check for duplicate category name (global check)
+    const existing = await pool.query(
+      "SELECT * FROM categories WHERE LOWER(name) = LOWER($1)",
+      [name.trim()]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({
+        message: "A category with this name already exists. Please use a different name."
+      });
+    }
+
+    const image_url = req.file ? `/uploads/${req.file.filename} ` : null;
+
+    const result = await pool.query(
+      `INSERT INTO categories(name, description, image_url, is_active, display_order)
+VALUES($1, $2, $3, $4,
+  (SELECT COALESCE(MAX(display_order), -1) + 1 FROM categories)
+       ) RETURNING * `,
+      [name.trim(), description || null, image_url, is_active === "true" || is_active === true || is_active === undefined]
+    );
+
+    res.json({
+      success: true,
+      message: "Category created successfully and is now available globally.",
+      category: result.rows[0]
+    });
+  } catch (error) {
+    console.error("Category creation error:", error);
+    res.status(500).json({ error: "Category creation failed" });
+  }
+});
+
+// Get categories for admin panel - ALL categories (global view)
+app.get("/api/admin/categories", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const search = req.query.search || "";
+
+    let query = `SELECT * FROM categories WHERE 1 = 1`;
+    let countQuery = `SELECT COUNT(*) FROM categories WHERE 1 = 1`;
+    let params = [];
+    let paramIdx = 1;
+
+    // No vendor filtering - ALL categories are visible to everyone
+    // Categories are global
+
+    if (search) {
+      query += ` AND name ILIKE $${paramIdx} `;
+      countQuery += ` AND name ILIKE $${paramIdx} `;
+      params.push(`% ${search}% `);
+      paramIdx++;
+    }
+
+    query += ` ORDER BY display_order ASC, created_at DESC LIMIT $${paramIdx} OFFSET $${paramIdx + 1} `;
+
+    const countResult = await pool.query(countQuery, params.slice(0, paramIdx - 1));
+    const totalCount = parseInt(countResult.rows[0].count);
+    params.push(limit, offset);
+
+    const result = await pool.query(query, params);
+    res.json({
+      success: true,
+      categories: result.rows,
+      pagination: {
+        totalCount,
+        totalPages: Math.ceil(totalCount / limit),
+        currentPage: page,
+        limit
+      }
+    });
+  } catch (error) {
+    console.error("Fetch categories error:", error);
+    res.status(500).json({ error: "Failed to fetch categories" });
+  }
+});
+
+// Update category - Any admin can update (global)
+app.put("/api/admin/categories/:id", verifyToken, verifyAdminOrSuperAdmin, upload.single("image"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, is_active } = req.body;
+
+    // Check if category exists
+    const checkResult = await pool.query("SELECT * FROM categories WHERE id = $1", [id]);
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: "Category not found" });
+    }
+
+    // If name is being changed, check for duplicates
+    if (name && name.trim() !== checkResult.rows[0].name) {
+      const duplicateCheck = await pool.query(
+        "SELECT * FROM categories WHERE LOWER(name) = LOWER($1) AND id != $2",
+        [name.trim(), id]
+      );
+      if (duplicateCheck.rows.length > 0) {
+        return res.status(400).json({
+          message: "A category with this name already exists. Please use a different name."
+        });
+      }
+    }
+
+    let image_url = checkResult.rows[0].image_url;
+    if (req.file) {
+      // Delete old image if exists
+      if (image_url) {
+        const oldPath = path.join(UPLOAD_BASE_PATH, image_url.replace('/uploads/', ''));
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+      image_url = `/uploads/${req.file.filename} `;
+    }
+
+    const result = await pool.query(
+      `UPDATE categories 
+       SET name = COALESCE($1, name),
+  description = COALESCE($2, description),
+  image_url = COALESCE($3, image_url),
+  is_active = COALESCE($4, is_active),
+  updated_at = NOW()
+       WHERE id = $5
+RETURNING * `,
+      [
+        name ? name.trim() : null,
+        description || null,
+        image_url,
+        is_active !== undefined ? (is_active === "true" || is_active === true) : null,
+        id
+      ]
+    );
+
+    res.json({ success: true, category: result.rows[0] });
+  } catch (error) {
+    console.error("Category update error:", error);
+    res.status(500).json({ error: "Category update failed" });
+  }
+});
+
+// Delete category - Only Super Admin can delete globally
+app.delete("/api/admin/categories/:id", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if category is being used by any products
+    const productCheck = await pool.query(
+      "SELECT COUNT(*) as count FROM products WHERE category_id = $1",
+      [id]
+    );
+
+    if (parseInt(productCheck.rows[0].count) > 0) {
+      // Instead of deleting, mark as inactive
+      await pool.query(
+        "UPDATE categories SET is_active = false WHERE id = $1",
+        [id]
+      );
+      return res.json({
+        success: true,
+        message: "Category is being used by products. It has been marked as inactive instead."
+      });
+    }
+
+    // Get image URL to delete file
+    const catResult = await pool.query("SELECT image_url FROM categories WHERE id = $1", [id]);
+    if (catResult.rows.length > 0 && catResult.rows[0].image_url) {
+      const imagePath = path.join(UPLOAD_BASE_PATH, catResult.rows[0].image_url.replace('/uploads/', ''));
+      if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
+    }
+
+    await pool.query("DELETE FROM categories WHERE id = $1", [id]);
+    res.json({ success: true, message: "Category deleted successfully" });
+  } catch (error) {
+    console.error("Category delete error:", error);
+    res.status(500).json({ error: "Delete failed" });
+  }
+});
+
+// Reorder categories - Only Super Admin can reorder
+app.put("/api/admin/categories/reorder", verifyToken, verifySuperAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { order } = req.body;
+    await client.query("BEGIN");
+    for (const item of order) {
+      await client.query(
+        "UPDATE categories SET display_order = $1 WHERE id = $2",
+        [item.display_order, item.id]
+      );
+    }
+    await client.query("COMMIT");
+    res.json({ success: true, message: "Categories reordered successfully" });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Reorder error:", error);
+    res.status(500).json({ error: "Reorder failed" });
+  } finally {
+    client.release();
+  }
+});
+
+// Public endpoint to get active categories
+app.get("/api/categories", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM categories WHERE is_active = true ORDER BY display_order ASC, created_at DESC"
+    );
+    res.json({ success: true, categories: result.rows });
+  } catch (error) {
+    console.error("Fetch public categories error:", error);
+    res.status(500).json({ error: "Failed to fetch categories" });
+  }
+});
+
+// Add this endpoint to generate slugs for existing categories
+app.post("/api/admin/categories/generate-slugs", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const categories = await pool.query("SELECT id, name FROM categories WHERE slug IS NULL");
+
+    for (const cat of categories.rows) {
+      const slug = cat.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      await pool.query("UPDATE categories SET slug = $1 WHERE id = $2", [slug, cat.id]);
+    }
+
+    res.json({ success: true, message: `Updated ${categories.rows.length} categories` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});// Public endpoint for navbar (no auth required)
+app.get("/api/public/navbar/categories", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, slug, image_url 
+       FROM categories 
+       WHERE is_active = true AND show_in_navbar = true 
+       ORDER BY nav_order ASC, display_order ASC`
+    );
+    res.json({ success: true, categories: result.rows });
+  } catch (error) {
+    console.error("Error fetching public navbar categories:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch categories" });
+  }
+});
+
+// ================= SUBCATEGORIES =================
+app.post("/api/admin/subcategories", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const { name, category_id, description } = req.body;
+    const vendor_id = req.user.role === 'super_admin' ? null : req.user.id;
+    const result = await pool.query(`INSERT INTO sub_categories(name, category_id, description, vendor_id) VALUES($1, $2, $3, $4) RETURNING * `, [name, category_id, description, vendor_id]);
+    res.json({ success: true, subcategory: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: "Subcategory creation failed" });
+  }
+});
+
+app.get("/api/subcategories", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT s.*, c.name as category_name FROM sub_categories s
+       LEFT JOIN categories c ON s.category_id = c.id
+       LEFT JOIN users u ON s.vendor_id = u.id
+       WHERE s.is_active = true AND (s.vendor_id IS NULL OR u.store_active = true)
+       ORDER BY s.created_at DESC`
+    );
+    res.json({ success: true, subcategories: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch subcategories" });
+  }
+});
+
+app.get("/api/admin/subcategories", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    let query = `SELECT s.*, c.name as category_name FROM sub_categories s LEFT JOIN categories c ON s.category_id = c.id WHERE 1 = 1`;
+    let params = [];
+    if (req.user.role !== 'super_admin') {
+      query += ` AND(s.vendor_id = $1 OR s.vendor_id IS NULL)`;
+      params.push(req.user.id);
+    }
+    query += ` ORDER BY s.created_at DESC`;
+    const result = await pool.query(query, params);
+    res.json({ success: true, subcategories: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch subcategories" });
+  }
+});
+
+app.get("/api/categories/:id/subcategories", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT s.* FROM sub_categories s
+       LEFT JOIN users u ON s.vendor_id = u.id
+       WHERE s.category_id = $1 AND s.is_active = true AND (s.vendor_id IS NULL OR u.store_active = true)`,
+      [req.params.id]
+    );
+    res.json({ success: true, subcategories: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch subcategories" });
+  }
+});
+
+app.put("/api/admin/subcategories/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      const check = await pool.query("SELECT vendor_id FROM sub_categories WHERE id=$1", [req.params.id]);
+      if (check.rows.length === 0 || check.rows[0].vendor_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
+    }
+    const { name, description, category_id, is_active } = req.body;
+    const result = await pool.query(`UPDATE sub_categories SET name = $1, description = $2, category_id = $3, is_active = $4, updated_at = NOW() WHERE id = $5 RETURNING * `, [name, description, category_id, is_active, req.params.id]);
+    res.json({ success: true, subcategory: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: "Update failed" });
+  }
+});
+
+app.delete("/api/admin/subcategories/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      const check = await pool.query("SELECT vendor_id FROM sub_categories WHERE id=$1", [req.params.id]);
+      if (check.rows.length === 0 || check.rows[0].vendor_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
+    }
+    await pool.query("DELETE FROM sub_categories WHERE id=$1", [req.params.id]);
+    res.json({ success: true, message: "Subcategory deleted" });
+  } catch (error) {
+    res.status(500).json({ error: "Delete failed" });
+  }
+});
+
+// ================= CHECK SKU & PRODUCT CODE =================
+app.get("/api/admin/products/check-sku", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const { sku, excludeId } = req.query;
+    if (!sku) return res.status(400).json({ success: false, message: "SKU is required" });
+
+    let query = "SELECT id FROM products WHERE sku ILIKE $1";
+    let params = [sku];
+    if (excludeId && !isNaN(parseInt(excludeId))) {
+      query += " AND id != $2";
+      params.push(parseInt(excludeId));
+    }
+    const existing = await pool.query(query, params);
+    res.json({ success: true, exists: existing.rows.length > 0 });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get("/api/admin/products/suggest-sku", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    let { base = "SKU" } = req.query;
+    if (!base || base.trim() === "") base = "SKU";
+    base = base.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6);
+    if (base.length < 2) base = "SKU";
+
+    let counter = 1;
+    let candidate = "";
+    let found = false;
+
+    while (!found) {
+      candidate = `${base} -${counter.toString().padStart(3, '0')} `;
+      const existing = await pool.query("SELECT id FROM products WHERE sku ILIKE $1", [candidate]);
+      if (existing.rows.length === 0) {
+        found = true;
+      } else {
+        counter++;
+      }
+    }
+    res.json({ success: true, suggestedSku: candidate });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get("/api/admin/products/check-product-code", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const { code, excludeId } = req.query;
+    if (!code) return res.status(400).json({ success: false, message: "Product code is required" });
+
+    let query = "SELECT id FROM products WHERE product_code ILIKE $1";
+    let params = [code];
+    if (excludeId && !isNaN(parseInt(excludeId))) {
+      query += " AND id != $2";
+      params.push(parseInt(excludeId));
+    }
+    const existing = await pool.query(query, params);
+    res.json({ success: true, exists: existing.rows.length > 0 });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get("/api/admin/products/next-available-code", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    let basePattern = "JAYA-";
+    let counter = 1;
+    let found = false;
+    let candidate = "";
+
+    while (!found) {
+      candidate = `${basePattern}${counter.toString().padStart(3, '0')} `;
+      const existing = await pool.query("SELECT id FROM products WHERE product_code = $1", [candidate]);
+      if (existing.rows.length === 0) {
+        found = true;
+      } else {
+        counter++;
+      }
+    }
+    res.json({ success: true, nextId: candidate });
+  } catch (err) {
+    res.json({ success: true, nextId: "JAYA-001" });
+  }
+});
+
+// ================= PRODUCTS =================
+const parseVariantsPayload = (payload) => {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload.filter(Boolean);
+  if (typeof payload === 'string') {
+    try {
+      const parsed = JSON.parse(payload);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+      return [];
+    }
+  }
+  if (payload && typeof payload === 'object') {
+    return Array.isArray(payload.variants) ? payload.variants : [];
+  }
+  return [];
+};
+
+const normalizeVariantInput = (variant) => ({
+  variant_name: variant?.variant_name || variant?.name || variant?.label || "Default",
+  quantity: variant?.quantity !== undefined && variant?.quantity !== "" ? Number(variant.quantity) : 0,
+  unit: variant?.unit || "ml",
+  price: variant?.price !== undefined && variant?.price !== "" ? Number(variant.price) : 0,
+  stock_quantity: variant?.stock_quantity !== undefined && variant?.stock_quantity !== "" ? Number(variant.stock_quantity) : 0,
+  is_active: variant?.is_active !== false
+});
+
+const attachVariantsToProduct = async (product) => {
+  const variantsRes = await pool.query(
+    `SELECT * FROM product_variants WHERE product_id = $1 AND is_active = true ORDER BY id ASC`,
+    [product.id]
+  );
+  const variants = variantsRes.rows;
+  const totalVariantStock = variants.reduce((sum, variant) => sum + Number(variant.stock_quantity || 0), 0);
+  const firstVariantPrice = variants.length > 0 ? Number(variants[0].price || 0) : Number(product.price || 0);
+  return {
+    ...product,
+    variants,
+    price: firstVariantPrice || Number(product.price || 0),
+    stock_quantity: variants.length > 0 ? totalVariantStock : Number(product.stock_quantity || 0)
+  };
+};
+
+app.post(
+  "/api/admin/products",
+  verifyToken,
+  verifyAdminVendorIndividualAccess,
+  uploadProductMedia.fields([{ name: 'image', maxCount: 1 }, { name: 'video', maxCount: 1 }]),
+  async (req, res) => {
+    const uploadedFiles = [];
+    try {
+      const { name, description, old_price, price, category_id, sub_category_id, sku, stock_quantity, is_featured, color, product_code, weight, length, width, height } = req.body;
+      if (!name || !price || !category_id) throw new Error("Name, price and category required");
+
+      const rawVariants = parseVariantsPayload(req.body.variants);
+      const normalizedVariants = rawVariants
+        .map(normalizeVariantInput)
+        .filter((variant) => variant.variant_name || variant.quantity || variant.price || variant.stock_quantity);
+      const variantRows = normalizedVariants.length > 0
+        ? normalizedVariants
+        : [{ variant_name: "Default", quantity: 0, unit: "ml", price: Number(price) || 0, stock_quantity: Number(stock_quantity) || 0, is_active: true }];
+      const totalVariantStock = variantRows.reduce((sum, variant) => sum + Number(variant.stock_quantity || 0), 0);
+      const firstVariantPrice = variantRows[0]?.price !== undefined ? Number(variantRows[0].price) : Number(price) || 0;
+
+      let main_image_url = null; let video_url = null;
+      if (req.files?.image) { main_image_url = `/uploads/products/images/${req.files.image[0].filename} `; uploadedFiles.push(req.files.image[0].path); }
+      if (req.files?.video) { video_url = `/uploads/products/videos/${req.files.video[0].filename} `; uploadedFiles.push(req.files.video[0].path); }
+
+      const result = await pool.query(
+        `INSERT INTO products(name, description, old_price, price, category_id, sub_category_id, main_image_url, video_url, sku, stock_quantity, is_featured, color, product_code, weight, length, width, height, vendor_id) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING * `,
+        [name, description, old_price, firstVariantPrice, category_id, sub_category_id, main_image_url, video_url, sku, totalVariantStock || stock_quantity || 0, is_featured === "true" || is_featured === true, color, product_code, weight || 0.7, length || 30, width || 20, height || 5, req.user.id]
+      );
+
+      const productId = result.rows[0].id;
+      for (const variant of variantRows) {
+        await pool.query(
+          `INSERT INTO product_variants(product_id, variant_name, quantity, unit, price, stock_quantity, is_active) VALUES($1, $2, $3, $4, $5, $6, $7)`,
+          [productId, variant.variant_name, variant.quantity, variant.unit, variant.price, variant.stock_quantity, variant.is_active]
+        );
+      }
+
+      const productWithVariants = await attachVariantsToProduct(result.rows[0]);
+      res.json({ success: true, product: productWithVariants });
+    } catch (error) {
+      for (const filePath of uploadedFiles) { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }
+      res.status(500).json({ error: error.message || "Product creation failed" });
+    }
+  }
+);
+
+app.get("/api/products", async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT p.*, c.name AS category_name, s.name AS subcategory_name, (SELECT image_url FROM product_images WHERE product_id = p.id ORDER BY display_order ASC LIMIT 1) AS hover_image FROM products p JOIN users u ON p.vendor_id = u.id LEFT JOIN categories c ON p.category_id = c.id LEFT JOIN sub_categories s ON p.sub_category_id = s.id WHERE p.is_active = true AND u.store_active = true ORDER BY p.created_at DESC`);
+    const products = [];
+    for (const product of result.rows) {
+      products.push(await attachVariantsToProduct(product));
+    }
+    res.json({ success: true, products });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch products" });
+  }
+});
+
+app.get("/api/product/by-code/:code", async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT p.*, c.name AS category_name, s.name AS subcategory_name FROM products p JOIN users u ON p.vendor_id = u.id LEFT JOIN categories c ON p.category_id = c.id LEFT JOIN sub_categories s ON p.sub_category_id = s.id WHERE p.product_code = $1 AND p.is_active = true AND u.store_active = true`, [req.params.code]);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
+    const images = await pool.query(`SELECT image_url FROM product_images WHERE product_id = $1 ORDER BY display_order`, [result.rows[0].id]);
+    res.json({ success: true, product: { ...result.rows[0], images: images.rows.map(r => r.image_url) } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to fetch by code" });
+  }
+});
+
+app.get("/api/product/:uuid", async (req, res) => {
+  try {
+    const { uuid } = req.params; const { product_code } = req.query;
+    let product = null;
+    if (uuid) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid);
+      if (isUuid) {
+        const result = await pool.query(`SELECT p.*, c.name AS category_name, s.name AS subcategory_name FROM products p JOIN users u ON p.vendor_id = u.id LEFT JOIN categories c ON p.category_id = c.id LEFT JOIN sub_categories s ON p.sub_category_id = s.id WHERE p.uuid = $1 AND p.is_active = true AND u.store_active = true`, [uuid]);
+        if (result.rows.length > 0) product = result.rows[0];
+      } else if (!isNaN(uuid)) {
+        const result = await pool.query(`SELECT p.*, c.name AS category_name, s.name AS subcategory_name FROM products p JOIN users u ON p.vendor_id = u.id LEFT JOIN categories c ON p.category_id = c.id LEFT JOIN sub_categories s ON p.sub_category_id = s.id WHERE p.id = $1 AND p.is_active = true AND u.store_active = true`, [parseInt(uuid)]);
+        if (result.rows.length > 0) product = result.rows[0];
+      }
+    }
+    if (!product && product_code) {
+      const result = await pool.query(`SELECT p.*, c.name AS category_name, s.name AS subcategory_name FROM products p JOIN users u ON p.vendor_id = u.id LEFT JOIN categories c ON p.category_id = c.id LEFT JOIN sub_categories s ON p.sub_category_id = s.id WHERE p.product_code = $1 AND p.is_active = true AND u.store_active = true`, [product_code]);
+      if (result.rows.length > 0) product = result.rows[0];
+    }
+    if (!product) return res.status(404).json({ success: false, message: "Product not found" });
+    const productWithVariants = await attachVariantsToProduct(product);
+    const images = await pool.query(`SELECT image_url FROM product_images WHERE product_id = $1 ORDER BY display_order ASC`, [product.id]);
+    res.json({ success: true, product: { ...productWithVariants, images: images.rows.map(row => row.image_url) } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to fetch product" });
+  }
+});
+
+app.get("/api/admin/products/next-id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT product_code FROM products WHERE product_code LIKE 'JAYA-%' ORDER BY id DESC LIMIT 1`);
+    let nextId = "JAYA-001";
+    if (result && result.rows.length > 0) {
+      const lastId = result.rows[0].product_code;
+      if (lastId && lastId.includes("-")) {
+        const parts = lastId.split("-");
+        const lastNumber = parseInt(parts[1]);
+        if (!isNaN(lastNumber)) nextId = `JAYA - ${(lastNumber + 1).toString().padStart(3, '0')} `;
+      }
+    }
+    res.json({ success: true, nextId });
+  } catch (error) {
+    res.json({ success: true, nextId: "JAYA-001" });
+  }
+});
+
+app.get("/api/admin/products", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const { search } = req.query;
+
+    let query = `SELECT p.*, c.name AS category_name, u.name AS vendor_name FROM products p LEFT JOIN categories c ON p.category_id = c.id LEFT JOIN users u ON p.vendor_id = u.id WHERE 1 = 1`;
+    let countQuery = `SELECT COUNT(*) FROM products p WHERE 1 = 1`;
+    let params = [];
+    let paramIdx = 1;
+
+    const userRole = req.user.role?.toLowerCase();
+    if (userRole !== 'super_admin') {
+      query += ` AND p.vendor_id = $${paramIdx} `;
+      countQuery += ` AND p.vendor_id = $${paramIdx} `;
+      params.push(req.user.id);
+      paramIdx++;
+    }
+
+    if (search) {
+      query += ` AND p.name ILIKE $${paramIdx} `;
+      countQuery += ` AND p.name ILIKE $${paramIdx} `;
+      params.push(`% ${search}% `);
+      paramIdx++;
+    }
+
+    query += ` ORDER BY p.created_at DESC LIMIT $${paramIdx} OFFSET $${paramIdx + 1} `;
+    const totalRes = await pool.query(countQuery, params.slice(0, paramIdx - 1));
+    const totalCount = parseInt(totalRes.rows[0].count);
+
+    const result = await pool.query(query, [...params, limit, offset]);
+
+    res.json({
+      success: true,
+      products: result.rows,
+      pagination: { totalCount, totalPages: Math.ceil(totalCount / limit), currentPage: page }
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch products" });
+  }
+});
+
+app.put(
+  "/api/admin/products/:id",
+  verifyToken,
+  verifyAdminVendorIndividualAccess,
+  uploadProductMedia.fields([{ name: 'image', maxCount: 1 }, { name: 'video', maxCount: 1 }]),
+  async (req, res) => {
+    const uploadedFiles = [];
+    try {
+      const { id } = req.params;
+      let { name, description, old_price, price, stock_quantity, is_featured, is_active, color, sku, product_code, weight, length, width, height, category_id, sub_category_id } = req.body;
+
+      const existing = await pool.query("SELECT main_image_url, video_url, vendor_id FROM products WHERE id = $1", [id]);
+      if (existing.rows.length === 0) throw new Error("Product not found");
+      const userRole = req.user.role?.toLowerCase();
+      if (userRole !== 'super_admin' && existing.rows[0].vendor_id !== req.user.id) {
+        throw new Error("Unauthorized to edit this product");
+      }
+
+      price = price !== undefined && price !== "" ? Number(price) : undefined;
+      old_price = old_price !== undefined && old_price !== "" ? Number(old_price) : undefined;
+      stock_quantity = stock_quantity !== undefined && stock_quantity !== "" ? Number(stock_quantity) : undefined;
+      is_featured = is_featured === "true" || is_featured === true || (is_featured === "false" || is_featured === false ? false : undefined);
+      is_active = is_active === "true" || is_active === true || (is_active === "false" || is_active === false ? false : undefined);
+      const categoryId = category_id !== undefined && category_id !== "" ? Number(category_id) : undefined;
+      const subCategoryId = sub_category_id !== undefined && sub_category_id !== "" ? Number(sub_category_id) : undefined;
+
+      const rawVariants = parseVariantsPayload(req.body.variants);
+      const normalizedVariants = rawVariants
+        .map(normalizeVariantInput)
+        .filter((variant) => variant.variant_name || variant.quantity || variant.price || variant.stock_quantity);
+      const variantRows = normalizedVariants.length > 0
+        ? normalizedVariants
+        : [{ variant_name: "Default", quantity: 0, unit: "ml", price: price || 0, stock_quantity: stock_quantity || 0, is_active: true }];
+      const totalVariantStock = variantRows.reduce((sum, variant) => sum + Number(variant.stock_quantity || 0), 0);
+      const firstVariantPrice = variantRows[0]?.price !== undefined ? Number(variantRows[0].price) : Number(price) || 0;
+
+      let main_image_url = null; let video_url = null;
+      if (req.files?.image) { main_image_url = `/uploads/products/images/${req.files.image[0].filename} `; uploadedFiles.push(req.files.image[0].path); }
+      if (req.files?.video) { video_url = `/uploads/products/videos/${req.files.video[0].filename} `; uploadedFiles.push(req.files.video[0].path); }
+
+      const updates = []; const values = []; let paramCount = 1;
+      const addField = (field, value) => { if (value !== undefined) { updates.push(`${field} = $${paramCount++} `); values.push(value); } };
+
+      addField('name', name); addField('description', description); addField('old_price', old_price); addField('price', price !== undefined ? price : firstVariantPrice); addField('stock_quantity', stock_quantity !== undefined ? stock_quantity : totalVariantStock); addField('is_featured', is_featured); addField('is_active', is_active); addField('color', color); addField('sku', sku); addField('product_code', product_code); addField('weight', weight !== undefined && weight !== "" ? Number(weight) : undefined); addField('length', length !== undefined && length !== "" ? Number(length) : undefined); addField('width', width !== undefined && width !== "" ? Number(width) : undefined); addField('height', height !== undefined && height !== "" ? Number(height) : undefined); addField('category_id', categoryId); addField('sub_category_id', subCategoryId);
+      if (main_image_url) addField('main_image_url', main_image_url);
+      if (video_url) addField('video_url', video_url);
+      updates.push(`updated_at = NOW()`); values.push(id);
+
+      if (updates.length > 1) {
+        const query = `UPDATE products SET ${updates.join(", ")} WHERE id = $${paramCount} RETURNING * `;
+        const result = await pool.query(query, values);
+        await pool.query('DELETE FROM product_variants WHERE product_id = $1', [id]);
+        for (const variant of variantRows) {
+          await pool.query(
+            `INSERT INTO product_variants(product_id, variant_name, quantity, unit, price, stock_quantity, is_active) VALUES($1, $2, $3, $4, $5, $6, $7)`,
+            [id, variant.variant_name, variant.quantity, variant.unit, variant.price, variant.stock_quantity, variant.is_active]
+          );
+        }
+        const productWithVariants = await attachVariantsToProduct(result.rows[0]);
+        res.json({ success: true, product: productWithVariants });
+      } else {
+        res.json({ success: true, message: "No changes detected" });
+      }
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message || "Update failed" });
+    }
+  }
+);
+
+app.get("/api/admin/products/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT p.*, c.name AS category_name, s.name AS subcategory_name FROM products p LEFT JOIN categories c ON p.category_id = c.id LEFT JOIN sub_categories s ON p.sub_category_id = s.id WHERE p.id = $1`, [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
+    const userRole = req.user.role?.toLowerCase();
+    if (userRole !== 'super_admin' && result.rows[0].vendor_id !== req.user.id) return res.status(403).json({ success: false, message: "Unauthorized" });
+    const productWithVariants = await attachVariantsToProduct(result.rows[0]);
+    res.json({ success: true, product: productWithVariants });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to fetch product" });
+  }
+});
+
+app.delete("/api/admin/products/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const existing = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [req.params.id]);
+    const userRole = req.user.role?.toLowerCase();
+    if (userRole !== 'super_admin' && existing.rows[0]?.vendor_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+    await pool.query("DELETE FROM products WHERE id=$1", [req.params.id]);
+    res.json({ success: true, message: "Product permanently deleted", action: "deleted" });
+  } catch (error) {
+    if (error.code === '23503') {
+      await pool.query("UPDATE products SET is_active = false WHERE id = $1", [req.params.id]);
+      return res.json({
+        success: true,
+        message: "Product cannot be deleted because it has associated orders. It has been marked as hidden (inactive) instead.",
+        action: "hidden"
+      });
+    }
+    res.status(500).json({ success: false, error: "Delete failed" });
+  }
+});
+
+app.post("/api/admin/products/bulk-delete", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    const userRole = req.user.role?.toLowerCase();
+    for (const productId of ids) {
+      try {
+        const existing = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [productId]);
+        if (userRole !== 'super_admin' && existing.rows[0]?.vendor_id !== req.user.id) continue;
+        await pool.query("DELETE FROM products WHERE id=$1", [productId]);
+      } catch (err) {
+        if (err.code === '23503') await pool.query("UPDATE products SET is_active=false WHERE id=$1", [productId]);
+      }
+    }
+    res.json({ success: true, message: "Products processed" });
+  } catch (error) {
+    res.status(500).json({ error: "Bulk delete failed" });
+  }
+});
+
+app.patch("/api/admin/products/:id/stock", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const existing = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [req.params.id]);
+    const userRole = req.user.role?.toLowerCase();
+    if (userRole !== 'super_admin' && existing.rows[0]?.vendor_id !== req.user.id) return res.status(403).json({ success: false, message: "Unauthorized" });
+    const result = await pool.query(`UPDATE products SET stock_quantity = $1, updated_at = NOW() WHERE id = $2 RETURNING * `, [req.body.stock_quantity, req.params.id]);
+    res.json({ success: true, product: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: "Stock update failed" });
+  }
+});
+
+app.post("/api/admin/system/reset", verifyToken, verifySuperAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM order_items");
+    await client.query("DELETE FROM orders");
+    await client.query("DELETE FROM cart_items");
+    await client.query("DELETE FROM wishlist");
+    await client.query("DELETE FROM reviews");
+    await client.query("DELETE FROM returns");
+    await client.query("DELETE FROM users WHERE role != 'admin' AND role != 'Admin' AND role != 'super_admin' AND role != 'Super Admin'");
+    await client.query("UPDATE products SET is_active = true");
+    await client.query("COMMIT");
+    res.json({ success: true, message: "System reset successful. All orders, reviews, and non-admin users cleared." });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: "System reset failed" });
+  } finally {
+    client.release();
+  }
+});
+
+app.patch("/api/admin/products/:id/price", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { price, old_price } = req.body;
+    if (!price) return res.status(400).json({ message: "Price required" });
+
+    const existing = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [id]);
+    const userRole = req.user.role?.toLowerCase();
+    if (userRole !== 'super_admin' && existing.rows[0]?.vendor_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    const result = await pool.query(
+      `UPDATE products SET price = $1, old_price = $2, updated_at = NOW() WHERE id = $3 RETURNING * `,
+      [price, old_price, id]
+    );
+
+    res.json({ success: true, message: "Price updated successfully", product: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: "Price update failed" });
+  }
+});
+
+// ================= STOCK NOTIFICATION ROUTES =================
+app.post("/api/stock-notification", async (req, res) => {
+  try {
+    const { product_id, user_id, customer_name, email, phone } = req.body;
+    if (!product_id) return res.status(400).json({ success: false, message: "Product ID is required" });
+
+    const prodRes = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [product_id]);
+    const vendor_id = prodRes.rows[0]?.vendor_id || null;
+
+    let existingQuery = "SELECT * FROM stock_notifications WHERE product_id = $1 AND (";
+    let conditions = []; let params = [product_id]; let paramIdx = 2;
+    if (user_id) { conditions.push(`user_id = $${paramIdx++} `); params.push(user_id); }
+    if (email) { conditions.push(`email = $${paramIdx++} `); params.push(email); }
+    if (phone) { conditions.push(`phone = $${paramIdx++} `); params.push(phone); }
+
+    if (conditions.length > 0) {
+      existingQuery += conditions.join(" OR ") + ")";
+      const existing = await pool.query(existingQuery, params);
+      if (existing.rows.length > 0) return res.status(200).json({ success: true, message: "Notification request already recorded!" });
+    }
+
+    await pool.query(
+      "INSERT INTO stock_notifications (product_id, user_id, customer_name, email, phone, vendor_id) VALUES ($1::int, $2::int, $3, $4, $5, $6)",
+      [parseInt(product_id), (user_id && !isNaN(parseInt(user_id))) ? parseInt(user_id) : null, customer_name || null, email || null, phone || null, vendor_id]
+    );
+    res.json({ success: true, message: "Notification request saved successfully!" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to save notification request" });
+  }
+});
+
+app.get("/api/stock-notification/admin", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    let query = `
+      SELECT sn.*, p.name as product_name, p.main_image_url, p.product_code as sku
+      FROM stock_notifications sn
+      JOIN products p ON sn.product_id = p.id
+      WHERE 1 = 1`;
+
+    let params = [];
+    const userRole = req.user.role?.toLowerCase();
+    if (userRole !== 'super_admin') {
+      query += ` AND p.vendor_id = $1`;
+      params.push(req.user.id);
+    }
+
+    const result = await pool.query(query + " ORDER BY sn.created_at DESC", params);
+    res.json({ success: true, notifications: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch notifications" });
+  }
+});
+
+app.delete("/api/stock-notification/admin/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM stock_notifications WHERE id = $1", [req.params.id]);
+    res.json({ success: true, message: "Notification deleted" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to delete notification" });
+  }
+});
+
+app.get("/api/stock-notification/check/:productId", verifyToken, async (req, res) => {
+  try {
+    const productId = req.params.productId;
+    const userId = req.user.id;
+    const userResult = await pool.query("SELECT phone FROM users WHERE id = $1", [userId]);
+    const userPhone = userResult.rows[0]?.phone;
+
+    let query = "SELECT id FROM stock_notifications WHERE product_id = $1 AND (";
+    const params = [productId];
+    let idx = 2;
+
+    if (userId) { query += `user_id = $${idx++} `; params.push(userId); }
+    if (userPhone) {
+      if (userId) query += " OR ";
+      query += `phone = $${idx++} `;
+      params.push(userPhone);
+    }
+    query += ") LIMIT 1";
+
+    if (!userId && !userPhone) return res.json({ success: true, requested: false });
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, requested: result.rows.length > 0 });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to check notification status" });
+  }
+});
+
+// ================= PRODUCT IMAGES =================
+app.post("/api/admin/products/:id/images", verifyToken, verifyAdminVendorIndividualAccess, upload.array("images", 20), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [id]);
+    const userRole = req.user.role?.toLowerCase();
+    if (userRole !== 'super_admin' && existing.rows[0]?.vendor_id !== req.user.id) return res.status(403).json({ message: "Unauthorized" });
+
+    for (let i = 0; i < req.files.length; i++) {
+      const imageUrl = `/uploads/${req.files[i].filename} `;
+      await pool.query(`INSERT INTO product_images(product_id, image_url, display_order) VALUES($1, $2, $3)`, [id, imageUrl, i]);
+    }
+    res.json({ success: true, message: "Images uploaded successfully" });
+  } catch (error) {
+    res.status(500).json({ error: "Image upload failed" });
+  }
+});
+
+app.get("/api/products/:id/images", async (req, res) => {
+  try {
+    const productCheck = await pool.query(
+      `SELECT p.id FROM products p JOIN users u ON p.vendor_id = u.id WHERE p.id = $1 AND p.is_active = true AND u.store_active = true`,
+      [req.params.id]
+    );
+    if (productCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    const result = await pool.query(`SELECT * FROM product_images WHERE product_id = $1 ORDER BY display_order ASC`, [req.params.id]);
+    res.json({ success: true, images: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch images" });
+  }
+});
+
+app.delete("/api/admin/product-images/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM product_images WHERE id=$1", [req.params.id]);
+    res.json({ success: true, message: "Image deleted" });
+  } catch (error) {
+    res.status(500).json({ error: "Delete failed" });
+  }
+});
+
+app.patch("/api/admin/product-images/:id/order", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { display_order } = req.body;
+    const result = await pool.query(`UPDATE product_images SET display_order = $1 WHERE id = $2 RETURNING * `, [display_order, id]);
+    res.json({ success: true, image: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: "Update failed" });
+  }
+});
+
+// ================= USER ORDER STATS =================
+app.get("/api/admin/user-orders/:id", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(`
+SELECT
+COUNT(*) as total_orders,
+  COALESCE(SUM(total_amount), 0) as total_purchase,
+  COALESCE(SUM(discount), 0) as total_discount,
+  MAX(created_at) as last_order_date
+      FROM orders
+      WHERE user_id = $1
+  `, [id]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: "Order stats failed" });
+  }
+});
+
+// ================= ORDERS =================
+app.get("/api/admin/orders", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const userRole = req.user.role?.toLowerCase();
+    let result;
+
+    if (userRole === 'super_admin') {
+      result = await pool.query(`
+        SELECT o.*,
+  COALESCE(
+    (SELECT json_agg(json_build_object('id', oi.id, 'name', p.name, 'price', oi.price, 'quantity', oi.quantity, 'image', p.main_image_url, 'vendor_id', p.vendor_id, 'product_code', p.product_code))
+             FROM order_items oi 
+             JOIN products p ON oi.product_id = p.id 
+             WHERE oi.order_id = o.id),
+  '[]':: json
+          ) as items
+        FROM orders o 
+        ORDER BY o.created_at DESC
+  `);
+    } else {
+      result = await pool.query(`
+        SELECT o.*,
+  COALESCE(
+    (SELECT json_agg(json_build_object('id', oi.id, 'name', p.name, 'price', oi.price, 'quantity', oi.quantity, 'image', p.main_image_url, 'vendor_id', p.vendor_id, 'product_code', p.product_code))
+             FROM order_items oi 
+             JOIN products p ON oi.product_id = p.id 
+             WHERE oi.order_id = o.id AND p.vendor_id = $1),
+  '[]':: json
+          ) as items
+        FROM orders o
+        WHERE EXISTS(
+    SELECT 1 FROM order_items oi2
+          JOIN products p2 ON oi2.product_id = p2.id
+          WHERE oi2.order_id = o.id AND p2.vendor_id = $1
+  )
+        ORDER BY o.created_at DESC
+  `, [req.user.id]);
+    }
+
+    const orders = result.rows.map(order => ({
+      ...order,
+      items: order.items || []
+    }));
+
+    res.json({ success: true, orders });
+  } catch (error) {
+    console.error("Orders fetch error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Helper to extract pickup schedule from Shiprocket order/shipment data
+const parseShiprocketPickupSchedule = (data) => {
+  if (!data || typeof data !== 'object') return null;
+
+  const candidates = [];
+  if (Array.isArray(data.data?.shipments)) {
+    candidates.push(...data.data.shipments);
+  }
+  if (data.data?.shipment) candidates.push(data.data.shipment);
+  if (data.shipment) candidates.push(data.shipment);
+  if (data.data && typeof data.data === 'object') candidates.push(data.data);
+  candidates.push(data);
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+
+    const pickupDate = candidate.pickup_date || candidate.pickup_scheduled_date || candidate.pickup_date_time || candidate.schedule_date || candidate.shipment_pickup_date;
+    const pickupTime = candidate.pickup_time || candidate.pickup_slot || candidate.pickup_time_slot || candidate.pickup_scheduled_time || candidate.schedule_time || candidate.shipment_pickup_time;
+    const pickupDateTime = candidate.pickup_date_time || candidate.pickup_datetime || candidate.pickup_date_time_slot || candidate.pickup_date || candidate.pickup_time;
+
+    if (pickupDate || pickupTime || pickupDateTime) {
+      const display = pickupDateTime || (pickupDate && pickupTime ? `${pickupDate} ${pickupTime}` : pickupDate || pickupTime);
+      return {
+        date: pickupDate || null,
+        time: pickupTime || null,
+        dateTime: pickupDateTime || null,
+        display: display || null,
+        raw: candidate
+      };
+    }
+  }
+
+  return null;
+};
+
+app.get("/api/admin/orders/:id/shiprocket-pickup", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const orderResult = await pool.query(`SELECT shiprocket_order_id, shiprocket_shipment_id FROM orders WHERE id = $1`, [orderId]);
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const order = orderResult.rows[0];
+    if (!order.shiprocket_order_id && !order.shiprocket_shipment_id) {
+      return res.status(200).json({ success: true, schedule: null, message: "Order has not been pushed to Shiprocket yet." });
+    }
+
+    const token = await authenticateShiprocket();
+    let shiprocketData = null;
+    let schedule = null;
+
+    if (order.shiprocket_order_id) {
+      const orderResponse = await fetch(`https://apiv2.shiprocket.in/v1/external/orders/show/${encodeURIComponent(order.shiprocket_order_id)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const text = await orderResponse.text();
+      try {
+        shiprocketData = JSON.parse(text);
+      } catch (parseError) {
+        console.error('Failed to parse Shiprocket order details response:', parseError.message, text);
+        shiprocketData = null;
+      }
+
+      schedule = parseShiprocketPickupSchedule(shiprocketData);
+    }
+
+    if (!schedule && order.shiprocket_shipment_id) {
+      const shipmentResponse = await fetch(`https://apiv2.shiprocket.in/v1/external/shipments/${encodeURIComponent(order.shiprocket_shipment_id)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const text = await shipmentResponse.text();
+      try {
+        shiprocketData = JSON.parse(text);
+      } catch (parseError) {
+        console.error('Failed to parse Shiprocket shipment details response:', parseError.message, text);
+        shiprocketData = null;
+      }
+
+      schedule = parseShiprocketPickupSchedule(shiprocketData);
+    }
+
+    if (schedule) {
+      await pool.query(
+        `UPDATE orders
+         SET pickup_schedule_display = $1,
+             pickup_schedule_date = $2,
+             pickup_schedule_time = $3
+         WHERE id = $4`,
+        [schedule.display || null, schedule.date || schedule.dateTime || null, schedule.time || null, orderId]
+      );
+    }
+
+    return res.json({ success: true, schedule });
+  } catch (error) {
+    console.error('Shiprocket pickup schedule fetch error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch Shiprocket pickup schedule' });
+  }
+});
+
+// ================= ORDER STATUS UPDATE - ADD TO VENDOR BALANCE =================
+
+app.put("/api/admin/orders/:id/status", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { status } = req.body;
+    const userRole = req.user.role?.toLowerCase();
+
+    await client.query("BEGIN");
+
+    if (userRole !== 'super_admin') {
+      const orderCheck = await client.query(`
+        SELECT DISTINCT o.id FROM orders o
+        JOIN order_items oi ON o.id = oi.order_id
+        JOIN products p ON oi.product_id = p.id
+        WHERE o.id = $1 AND p.vendor_id = $2
+  `, [req.params.id, req.user.id]);
+      if (orderCheck.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ success: false, message: "Unauthorized to update this order" });
+      }
+    }
+
+    await client.query(
+      `UPDATE orders SET order_status = $1, updated_at = NOW() WHERE id = $2`,
+      [status, req.params.id]
+    );
+
+    // When order is Delivered, add earnings to vendor balance
+    if (status === 'Delivered') {
+      const items = await client.query(`
+        SELECT oi.*, p.name as product_name, p.platform_fee_percent, o.discount as order_discount
+        FROM order_items oi
+        JOIN products p ON oi.product_id = p.id
+        JOIN orders o ON oi.order_id = o.id
+        WHERE oi.order_id = $1 AND oi.vendor_id IS NOT NULL
+      `, [req.params.id]);
+
+      console.log("Adding to vendor balance:", items.rows);
+
+      for (let item of items.rows) {
+        if (item.vendor_id && item.vendor_earning > 0) {
+          // Add to balance
+          await client.query(
+            `UPDATE users SET balance = balance + $1 WHERE id = $2`,
+            [parseFloat(item.vendor_earning), item.vendor_id]
+          );
+
+          // Log wallet transaction for credit
+          const platformFeeAmount = 0;
+          const couponDiscount = parseFloat(item.order_discount || 0);
+
+          await client.query(
+            `INSERT INTO wallet_transactions
+  (vendor_id, transaction_type, amount, status, description, order_id, platform_fee, coupon_discount_applied, original_amount)
+VALUES($1, 'credit', $2, 'completed', $3, $4, $5, $6, $7)`,
+            [
+              item.vendor_id,
+              parseFloat(item.vendor_earning),
+              `Earnings from Order #${req.params.id} - ${item.product_name} `,
+              req.params.id,
+              platformFeeAmount,
+              couponDiscount,
+              parseFloat(item.price) * item.quantity
+            ]
+          );
+
+          console.log(`Added ₹${item.vendor_earning} to vendor ${item.vendor_id} `);
+        }
+      }
+    }
+
+    await client.query("COMMIT");
+    res.json({ success: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Order status update error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  } finally {
+    client.release();
+  }
+});
+app.get("/api/orders", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT o.*,
+  (SELECT json_agg(json_build_object('id', oi.id, 'product_id', oi.product_id, 'name', p.name, 'image', p.main_image_url, 'quantity', oi.quantity, 'price', oi.price)) 
+        FROM order_items oi JOIN products p ON oi.product_id = p.id WHERE oi.order_id = o.id) as items
+      FROM orders o WHERE o.user_id = $1 ORDER BY o.created_at DESC`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch orders" });
+  }
+});
+
+// ================= ORDERS - FIXED COUPON DISCOUNT FOR VENDOR EARNINGS =================
+
+app.post("/api/orders", verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const {
+      customer_name,
+      email,
+      phone,
+      address,
+      total_amount,
+      discount,
+      coupon_id,
+      payment_method,
+      cartItems,
+      house_no,
+      street_area,
+      landmark,
+      city,
+      state,
+      pincode,
+      country
+    } = req.body;
+
+    if (!cartItems || cartItems.length === 0) throw new Error("Cart is empty");
+
+    // Calculate original total and discount
+    const originalTotal = cartItems.reduce((sum, item) => {
+      const price = parseFloat(item.price);
+      const qty = parseInt(item.quantity || 1);
+      return sum + (price * qty);
+    }, 0);
+
+    const discountAmount = parseFloat(discount || 0);
+    const finalAmount = parseFloat(total_amount);
+
+    // Insert order with all address components
+    const orderRes = await client.query(
+      `INSERT INTO orders(
+    user_id, customer_name, email, phone, address, total_amount,
+    discount, coupon_id, payment_method, payment_status, order_status,
+    house_no, street_area, landmark, city, state, pincode, country
+  ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Pending', 'Placed',
+    $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+      [
+        req.user.id,
+        customer_name,
+        email || null,
+        phone,
+        address,
+        finalAmount,
+        discountAmount,
+        coupon_id || null,
+        payment_method || 'COD',
+        house_no || '',
+        street_area || '',
+        landmark || '',
+        city || null,
+        state || null,
+        pincode || null,
+        country || 'India'
+      ]
+    );
+    const orderId = orderRes.rows[0].id;
+
+    // Insert order items
+    for (let item of cartItems) {
+      const prodRes = await client.query(
+        `SELECT p.vendor_id, p.price, p.platform_fee_percent
+         FROM products p
+         JOIN users u ON p.vendor_id = u.id
+         WHERE p.id = $1 AND p.is_active = true AND u.store_active = true`,
+        [item.product_id || item.id]
+      );
+      if (prodRes.rows.length === 0) {
+        throw new Error("Product is not available");
+      }
+      const vendor_id = prodRes.rows[0]?.vendor_id || null;
+      const original_price = parseFloat(prodRes.rows[0]?.price || item.price);
+      const platform_fee_percent = 0;
+      const qty = parseInt(item.quantity || 1);
+
+      let discounted_price = original_price;
+      if (discountAmount > 0 && originalTotal > 0) {
+        const itemOriginalTotal = original_price * qty;
+        const itemDiscount = (itemOriginalTotal / originalTotal) * discountAmount;
+        discounted_price = original_price - (itemDiscount / qty);
+        discounted_price = Math.max(0, discounted_price);
+      }
+
+      const vendor_earning = discounted_price * qty;
+
+      await client.query(
+        `INSERT INTO order_items(order_id, product_id, quantity, price, vendor_id, vendor_earning)
+VALUES($1, $2, $3, $4, $5, $6)`,
+        [orderId, item.product_id || item.id, qty, discounted_price, vendor_id, vendor_earning]
+      );
+
+      await client.query(
+        `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2`,
+        [qty, item.product_id || item.id]
+      );
+    }
+
+    if (coupon_id) {
+      await client.query(
+        `UPDATE coupons SET used_count = used_count + 1 WHERE id = $1`,
+        [coupon_id]
+      );
+    }
+
+    await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [req.user.id]);
+    await client.query("COMMIT");
+
+    // Emit new order event for real‑time notification
+    const newOrder = await pool.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
+    io.emit('new_order', {
+      orderId: orderId,
+      order: newOrder.rows[0]
+    });
+
+    const fullOrderResult = await pool.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
+    sendAdminNotification(fullOrderResult.rows[0]);
+
+    res.json({ success: true, orderId });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Order creation error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/orders/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `SELECT o.*,
+  (SELECT json_agg(json_build_object(
+    'id', oi.id,
+    'product_id', oi.product_id,
+    'product_code', p.product_code,
+    'name', p.name,
+    'image', p.main_image_url,
+    'quantity', oi.quantity,
+    'price', oi.price
+  )) 
+        FROM order_items oi 
+        JOIN products p ON oi.product_id = p.id 
+        WHERE oi.order_id = o.id) as items
+      FROM orders o 
+      WHERE o.id = $1 AND o.user_id = $2`,
+      [id, req.user.id]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ message: "Order not found" });
+    res.json({ success: true, order: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch top order" });
+  }
+});
+
+// ================= RAZORPAY ROUTES =================
+app.post("/api/razorpay/order", verifyToken, async (req, res) => {
+  try {
+    if (!razorpay) return res.status(500).json({ success: false, message: "Razorpay is not configured on the server" });
+    const { amount } = req.body;
+    const order = await razorpay.orders.create({ amount: Math.round(amount * 100), currency: "INR", receipt: `receipt_${Date.now()} `, payment_capture: 1 });
+    res.json({ success: true, order: { id: order.id, amount: order.amount, currency: order.currency } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to create Razorpay order" });
+  }
+});
+
+// ================= RAZORPAY VERIFY - FIXED COUPON DISCOUNT =================
+
+app.post("/api/razorpay/verify", verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderDetails } = req.body;
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const expectedSignature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(body.toString()).digest("hex");
+    if (expectedSignature !== razorpay_signature) return res.status(400).json({ success: false, message: "Invalid signature" });
+
+    await client.query("BEGIN");
+    const {
+      customer_name, email, phone, address, total_amount, discount, coupon_id,
+      cartItems, house_no, street_area, landmark, city, state, pincode, country
+    } = orderDetails;
+
+    const originalTotal = cartItems.reduce((sum, item) => {
+      const price = parseFloat(item.price);
+      const qty = parseInt(item.quantity || 1);
+      return sum + (price * qty);
+    }, 0);
+
+    const discountAmount = parseFloat(discount || 0);
+    const finalAmount = parseFloat(total_amount);
+
+    const orderRes = await client.query(
+      `INSERT INTO orders(
+    user_id, customer_name, email, phone, address, total_amount,
+    discount, coupon_id, payment_method, payment_status, order_status,
+    house_no, street_area, landmark, razorpay_order_id, razorpay_payment_id,
+    city, state, pincode, country
+  ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`,
+      [
+        req.user.id, customer_name, email || null, phone, address, finalAmount,
+        discountAmount, coupon_id || null, 'RAZORPAY', 'Completed', 'Placed',
+        house_no || '', street_area || '', landmark || '',
+        razorpay_order_id, razorpay_payment_id,
+        city || null, state || null, pincode || null, country || 'India'
+      ]
+    );
+    const orderId = orderRes.rows[0].id;
+
+    for (let item of cartItems) {
+      const prodRes = await client.query(
+        `SELECT p.vendor_id, p.price, p.platform_fee_percent
+         FROM products p
+         JOIN users u ON p.vendor_id = u.id
+         WHERE p.id = $1 AND p.is_active = true AND u.store_active = true`,
+        [item.product_id || item.id]
+      );
+      if (prodRes.rows.length === 0) {
+        throw new Error("Product is not available");
+      }
+      const vendor_id = prodRes.rows[0]?.vendor_id || null;
+      const original_price = parseFloat(prodRes.rows[0]?.price || item.price);
+      const platform_fee_percent = 0;
+      const qty = parseInt(item.quantity || 1);
+
+      let discounted_price = original_price;
+      if (discountAmount > 0 && originalTotal > 0) {
+        const itemOriginalTotal = original_price * qty;
+        const itemDiscount = (itemOriginalTotal / originalTotal) * discountAmount;
+        discounted_price = original_price - (itemDiscount / qty);
+        discounted_price = Math.max(0, discounted_price);
+      }
+
+      const vendor_earning = discounted_price * qty;
+
+      await client.query(
+        `INSERT INTO order_items(order_id, product_id, quantity, price, vendor_id, vendor_earning)
+VALUES($1, $2, $3, $4, $5, $6)`,
+        [orderId, item.product_id || item.id, qty, discounted_price, vendor_id, vendor_earning]
+      );
+
+      await client.query(
+        `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2`,
+        [qty, item.product_id || item.id]
+      );
+    }
+
+    if (coupon_id) {
+      await client.query(`UPDATE coupons SET used_count = used_count + 1 WHERE id = $1`, [coupon_id]);
+    }
+
+    await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [req.user.id]);
+    await client.query("COMMIT");
+
+    // Emit new order event for real‑time notification
+    const newOrder = await pool.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
+    io.emit('new_order', {
+      orderId: orderId,
+      order: newOrder.rows[0]
+    });
+
+
+    sendAdminNotification({
+      id: orderId,
+      customer_name,
+      email,
+      phone,
+      address,
+      total_amount: finalAmount,
+      payment_method: 'RAZORPAY'
+    });
+
+    res.json({ success: true, orderId, message: "Payment successful, order placed" });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Razorpay verification error:", error);
+    res.status(500).json({ success: false, message: error.message || "Payment verification failed" });
+  } finally {
+    client.release();
+  }
+});
+// ================= PAYOUTS ROUTES (UPDATED) =================
+
+// Get payouts for vendor/admin - FIXED to only show actual balance
+app.get("/api/admin/payouts", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    let query = `SELECT p.*, u.store_name, u.email, u.name as vendor_name, u.phone as vendor_phone FROM payouts p JOIN users u ON p.vendor_id = u.id WHERE 1 = 1`;
+    let params = [];
+    const userRole = req.user.role?.toLowerCase();
+    if (userRole !== 'super_admin') {
+      query += ` AND p.vendor_id = $1`;
+      params.push(req.user.id);
+    }
+    query += ` ORDER BY p.requested_at DESC`;
+    const result = await pool.query(query, params);
+
+    let balance = 0;
+    if (userRole !== 'super_admin') {
+      // Calculate actual balance based on PAID payouts only
+      const userRes = await pool.query(`SELECT balance FROM users WHERE id = $1`, [req.user.id]);
+      balance = parseFloat(userRes.rows[0].balance) || 0;
+
+      // Also get pending payouts to show on hold amount
+      const pendingRes = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) as pending_total FROM payouts WHERE vendor_id = $1 AND status = 'Pending'`,
+        [req.user.id]
+      );
+      balance = balance; // This is the actual available balance
+    }
+
+    res.json({ success: true, payouts: result.rows, balance });
+  } catch (err) {
+    console.error("Payouts fetch error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Request payout - FIXED
+app.post("/api/admin/payouts/request", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { amount, bank_details } = req.body;
+    const vendorId = req.user.id;
+
+    if (!amount || amount <= 0) throw new Error("Invalid amount");
+
+    const userRes = await client.query(`SELECT balance FROM users WHERE id = $1 FOR UPDATE`, [vendorId]);
+    const currentBalance = parseFloat(userRes.rows[0].balance) || 0;
+
+    if (currentBalance < amount) throw new Error("Insufficient wallet balance");
+
+    // Deduct from balance
+    await client.query(`UPDATE users SET balance = balance - $1 WHERE id = $2`, [amount, vendorId]);
+
+    // Create payout request
+    const payoutRes = await client.query(
+      `INSERT INTO payouts(vendor_id, amount, bank_details, status, requested_at)
+VALUES($1, $2, $3, 'Pending', NOW()) RETURNING id`,
+      [vendorId, amount, bank_details]
+    );
+
+    const payoutId = payoutRes.rows[0].id;
+
+    // Log wallet transaction for debit
+    await client.query(
+      `INSERT INTO wallet_transactions
+  (vendor_id, transaction_type, amount, status, description, payout_id, original_amount)
+VALUES($1, 'debit', $2, 'pending', $3, $4, $5)`,
+      [
+        vendorId,
+        amount,
+        `Withdrawal request #${payoutId} - Pending approval`,
+        payoutId,
+        amount
+      ]
+    );
+
+    await client.query("COMMIT");
+    res.json({ success: true, message: "Payout requested successfully" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Payout request error:", err);
+    res.status(400).json({ success: false, message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+
+// Approve payout (Super Admin only) - FIXED
+app.put("/api/admin/payouts/:id/approve", verifyToken, verifySuperAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const payoutCheck = await client.query(
+      "SELECT * FROM payouts WHERE id = $1 AND status = 'Pending'",
+      [req.params.id]
+    );
+
+    if (payoutCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Payout request not found or already processed" });
+    }
+
+    const payout = payoutCheck.rows[0];
+
+    await client.query(
+      `UPDATE payouts SET status = 'Paid', processed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [req.params.id]
+    );
+
+    // Update wallet transaction status
+    await client.query(
+      `UPDATE wallet_transactions SET status = 'completed' WHERE payout_id = $1`,
+      [req.params.id]
+    );
+
+    await client.query("COMMIT");
+    res.json({ success: true, message: "Payout approved successfully" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Approve payout error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  } finally {
+    client.release();
+  }
+});
+app.get("/api/admin/payouts/summary", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const summary = await pool.query(`
+SELECT
+COALESCE(SUM(CASE WHEN status = 'Pending' THEN amount ELSE 0 END), 0) as total_pending,
+  COALESCE(SUM(CASE WHEN status = 'Paid' THEN amount ELSE 0 END), 0) as total_paid,
+  COALESCE(SUM(amount), 0) as total_requested
+      FROM payouts
+  `);
+    res.json({ success: true, summary: summary.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get("/api/admin/payouts/vendor-summary/:vendorId", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const vendorId = req.params.vendorId;
+
+    // Get vendor's current balance
+    const vendorRes = await pool.query(
+      "SELECT balance FROM users WHERE id = $1",
+      [vendorId]
+    );
+    const currentBalance = vendorRes.rows[0]?.balance || 0;
+
+    // Get payout summary
+    const summary = await pool.query(`
+SELECT
+COALESCE(SUM(CASE WHEN status = 'Pending' THEN amount ELSE 0 END), 0) as total_pending,
+  COALESCE(SUM(CASE WHEN status = 'Paid' THEN amount ELSE 0 END), 0) as total_paid,
+  COALESCE(SUM(amount), 0) as total_requested
+      FROM payouts
+      WHERE vendor_id = $1
+  `, [vendorId]);
+
+    res.json({
+      success: true,
+      summary: {
+        ...summary.rows[0],
+        current_balance: currentBalance
+      }
+    });
+  } catch (err) {
+    console.error("Vendor summary error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+// Get vendor balances summary - FIXED to show actual available balance
+app.get("/api/admin/vendor-balances", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    // Get all vendors with their current balance
+    const result = await pool.query(`
+SELECT
+u.id,
+  u.name,
+  u.email,
+  u.store_name,
+  COALESCE(u.balance, 0) as balance
+      FROM users u
+      WHERE u.role = 'vendor'
+      ORDER BY u.name ASC
+    `);
+
+    res.json({ success: true, vendors: result.rows });
+  } catch (err) {
+    console.error("Vendor balances error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ================= COUPONS =================
+app.post("/api/admin/coupons", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const vendor_id = req.user.role === 'super_admin' ? null : req.user.id;
+    const { code, discount_type, discount_value, min_order_amount = 0, max_discount = null, usage_limit = 0, expiry_date = null, is_hidden = false } = req.body;
+
+    const result = await pool.query(
+      `INSERT INTO coupons(code, discount_type, discount_value, min_order_amount, max_discount, usage_limit, expiry_date, is_hidden, vendor_id)
+VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING * `,
+      [code, discount_type, discount_value, min_order_amount, max_discount, usage_limit, expiry_date, is_hidden, vendor_id]
+    );
+    res.json({ success: true, coupon: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get("/api/admin/coupons", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    let query = "SELECT * FROM coupons WHERE 1=1";
+    let params = [];
+    if (req.user.role !== 'super_admin') {
+      query += " AND vendor_id = $1";
+      params.push(req.user.id);
+    }
+    query += " ORDER BY created_at DESC";
+    const result = await pool.query(query, params);
+    res.json({ success: true, coupons: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.put("/api/admin/coupons/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      const check = await pool.query("SELECT vendor_id FROM coupons WHERE id=$1", [req.params.id]);
+      if (check.rows.length === 0 || check.rows[0].vendor_id !== req.user.id) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+    }
+    const { code, discount_type, discount_value, min_order_amount = 0, max_discount = null, usage_limit = 0, expiry_date = null, is_active = true, is_hidden = false } = req.body;
+    const result = await pool.query(
+      `UPDATE coupons SET code = $1, discount_type = $2, discount_value = $3, min_order_amount = $4, max_discount = $5, usage_limit = $6, expiry_date = $7, is_active = $8, is_hidden = $9 WHERE id = $10 RETURNING * `,
+      [code, discount_type, discount_value, min_order_amount, max_discount, usage_limit, expiry_date, is_active, is_hidden, req.params.id]
+    );
+    res.json({ success: true, coupon: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.delete("/api/admin/coupons/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      const check = await pool.query("SELECT vendor_id FROM coupons WHERE id=$1", [req.params.id]);
+      if (check.rows.length === 0 || check.rows[0].vendor_id !== req.user.id) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+    }
+    await pool.query("DELETE FROM coupons WHERE id=$1", [req.params.id]);
+    res.json({ success: true, message: "Coupon deleted" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get("/api/coupons", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.* FROM coupons c LEFT JOIN users u ON c.vendor_id = u.id WHERE c.is_active = true AND c.is_hidden = false AND (c.expiry_date IS NULL OR c.expiry_date > NOW()) AND (c.vendor_id IS NULL OR u.store_active = true)`
+    );
+    res.json({ success: true, coupons: result.rows });
+  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
+});
+
+app.post("/api/coupons/apply", verifyToken, async (req, res) => {
+  try {
+    const { code, totalAmount, cartItems } = req.body;
+
+    console.log("Applying coupon:", { code, totalAmount, cartItemsCount: cartItems?.length });
+
+    // Get coupon from database and ensure vendor store is active if applicable
+    const result = await pool.query(
+      `SELECT c.*, u.store_active FROM coupons c LEFT JOIN users u ON c.vendor_id = u.id
+    WHERE c.code ILIKE $1 AND c.is_active = true
+    AND (c.vendor_id IS NULL OR u.store_active = true)`,
+      [code]
+    );
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: "Invalid coupon code" });
+    }
+
+    const coupon = result.rows[0];
+
+    // If the coupon belongs to a vendor, make sure their store is active
+    if (coupon.vendor_id && !coupon.store_active) {
+      return res.status(400).json({ message: "Coupon is not available" });
+    }
+
+    // Check expiry
+    if (coupon.expiry_date && new Date(coupon.expiry_date) < new Date()) {
+      return res.status(400).json({ message: "Coupon has expired" });
+    }
+
+    // Check usage limit
+    if (coupon.usage_limit && coupon.used_count >= coupon.usage_limit) {
+      return res.status(400).json({ message: "Coupon usage limit reached" });
+    }
+
+    let applicableSubtotal = parseFloat(totalAmount);
+
+    // If coupon is vendor-specific, calculate subtotal for that vendor only
+    if (coupon.vendor_id) {
+      if (!cartItems || cartItems.length === 0) {
+        return res.status(400).json({ message: "Cart is empty" });
+      }
+
+      const vendorSubtotal = cartItems.reduce((sum, item) => {
+        if (item.vendor_id === coupon.vendor_id) {
+          const itemPrice = parseFloat(item.price);
+          const itemQty = parseInt(item.quantity) || parseInt(item.qty) || 1;
+          return sum + (itemPrice * itemQty);
+        }
+        return sum;
+      }, 0);
+
+      if (vendorSubtotal === 0) {
+        return res.status(400).json({ message: "Coupon not applicable to any product in your cart" });
+      }
+
+      applicableSubtotal = vendorSubtotal;
+    }
+
+    // Check minimum order amount
+    const minOrderAmount = parseFloat(coupon.min_order_amount);
+    if (applicableSubtotal < minOrderAmount) {
+      return res.status(400).json({
+        message: `Minimum order amount of ₹${minOrderAmount} required for this coupon`
+      });
+    }
+
+    // Calculate discount
+    let discount = 0;
+    const discountValue = parseFloat(coupon.discount_value);
+
+    if (coupon.discount_type === "percentage") {
+      discount = (applicableSubtotal * discountValue) / 100;
+    } else {
+      discount = discountValue;
+    }
+
+    // Apply max discount limit
+    const maxDiscount = parseFloat(coupon.max_discount);
+    if (maxDiscount && discount > maxDiscount) {
+      discount = maxDiscount;
+    }
+
+    // Round discount to 2 decimal places
+    discount = Math.round(discount * 100) / 100;
+
+    console.log("Calculated discount:", discount);
+
+    res.json({
+      success: true,
+      discount: discount,
+      finalAmount: totalAmount - discount,
+      couponId: coupon.id,
+      coupon: coupon
+    });
+
+  } catch (error) {
+    console.error("Coupon apply error:", error);
+    res.status(500).json({ message: "Failed to apply coupon", error: error.message });
+  }
+});
+
+
+app.post("/api/coupons/auto-apply", verifyToken, async (req, res) => {
+  try {
+    const { totalAmount } = req.body;
+    const result = await pool.query(
+      `SELECT c.* FROM coupons c LEFT JOIN users u ON c.vendor_id = u.id WHERE c.is_active = true AND c.is_hidden = false AND (c.expiry_date IS NULL OR c.expiry_date > NOW()) AND (c.vendor_id IS NULL OR u.store_active = true)`
+    );
+    if (result.rows.length === 0) return res.json({ success: true, message: "No coupons available", discount: 0, finalAmount: totalAmount });
+
+    let bestCoupon = null;
+    let bestDiscount = 0;
+
+    for (let coupon of result.rows) {
+      if (coupon.usage_limit && coupon.used_count >= coupon.usage_limit) continue;
+      if (totalAmount < coupon.min_order_amount) continue;
+
+      let discount = coupon.discount_type === "percentage" ? (totalAmount * coupon.discount_value) / 100 : coupon.discount_value;
+      if (coupon.max_discount && discount > coupon.max_discount) discount = coupon.max_discount;
+
+      if (discount > bestDiscount) { bestDiscount = discount; bestCoupon = coupon; }
+    }
+
+    if (!bestCoupon) return res.json({ success: true, message: "No applicable coupons", discount: 0, finalAmount: totalAmount });
+    res.json({ success: true, coupon: bestCoupon, discount: bestDiscount, finalAmount: totalAmount - bestDiscount });
+  } catch (error) {
+    res.status(500).json({ message: "Auto apply failed" });
+  }
+});
+
+// ================= REVIEWS (User) =================
+app.post("/api/reviews", verifyToken, upload.array("images", 5), async (req, res) => {
+  try {
+    const { product_id, rating, comment } = req.body;
+    const userId = req.user.id;
+
+    let imagePaths = [];
+    if (req.files && req.files.length > 0) {
+      imagePaths = req.files.map(file => `/uploads/${file.filename} `);
+    }
+
+    const result = await pool.query(
+      `INSERT INTO reviews(product_id, user_id, rating, comment, images, status)
+VALUES($1, $2, $3, $4, $5, 'pending')
+       ON CONFLICT(user_id, product_id)
+       DO UPDATE SET
+rating = EXCLUDED.rating,
+  comment = EXCLUDED.comment,
+  images = EXCLUDED.images,
+  status = 'pending',
+  updated_at = CURRENT_TIMESTAMP
+RETURNING * `,
+      [Number(product_id), userId, Number(rating), comment, imagePaths]
+    );
+
+    res.json({ success: true, review: result.rows[0] });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Review failed" });
+  }
+});
+
+app.get("/api/reviews/:productId", async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const result = await pool.query(
+      `SELECT r.*, u.name
+       FROM reviews r
+       JOIN users u ON r.user_id = u.id
+       WHERE r.product_id = $1 AND r.status = 'approved'
+       ORDER BY r.created_at DESC`,
+      [productId]
+    );
+    res.json({ success: true, reviews: result.rows });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch reviews" });
+  }
+});
+
+app.get("/api/reviews/can-review/:productId", verifyToken, async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const userId = req.user.id;
+    const purchaseCheck = await pool.query(
+      `SELECT * FROM order_items oi
+       JOIN orders o ON oi.order_id = o.id
+       WHERE o.user_id = $1 AND oi.product_id = $2`,
+      [userId, productId]
+    );
+    res.json({ canReview: purchaseCheck.rows.length > 0 });
+  } catch (error) {
+    res.status(500).json({ canReview: false });
+  }
+});
+
+app.delete("/api/reviews/:id", verifyToken, async (req, res) => {
+  await pool.query("DELETE FROM reviews WHERE id=$1 AND user_id=$2", [req.params.id, req.user.id]);
+  res.json({ success: true });
+});
+
+app.get("/api/reviews/summary/:productId", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+COUNT(*):: INT as total_reviews,
+  COALESCE(ROUND(AVG(rating), 1), 0):: FLOAT as avg_rating
+       FROM reviews
+       WHERE product_id = $1 AND status = 'approved'`,
+      [req.params.productId]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ total_reviews: 0, avg_rating: 0 });
+  }
+});
+
+app.get("/api/reviews/mine/:productId", verifyToken, async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const userId = req.user.id;
+    const result = await pool.query(`SELECT r.*, u.name FROM reviews r JOIN users u ON r.user_id = u.id WHERE r.product_id = $1 AND r.user_id = $2`, [productId, userId]);
+    res.json({ success: true, review: result.rows[0] || null });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch your review" });
+  }
+});
+
+app.put("/api/reviews/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rating, comment } = req.body;
+    const userId = req.user.id;
+    const check = await pool.query("SELECT * FROM reviews WHERE id=$1 AND user_id=$2", [id, userId]);
+    if (check.rows.length === 0) return res.status(403).json({ message: "Forbidden" });
+
+    const result = await pool.query(
+      `UPDATE reviews SET rating = $1, comment = $2, status = 'pending', updated_at = NOW()
+       WHERE id = $3 AND user_id = $4 RETURNING * `,
+      [rating, comment, id, userId]
+    );
+    res.json({ success: true, review: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: "Update failed" });
+  }
+});
+
+// ================= BANNERS =================
+app.post("/api/admin/banner", verifyToken, verifyAdminVendorIndividualAccess, uploadBannerMedia.fields([{ name: 'image', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
+  const uploadedFiles = [];
+  try {
+    const { title, subtitle, button_text, link, is_active, type, category_id } = req.body;
+    const vendor_id = req.user.role === 'super_admin' ? null : req.user.id;
+
+    let image_url = null, video_url = null;
+    if (req.files?.image) { image_url = `/uploads/banners/${req.files.image[0].filename} `; uploadedFiles.push(req.files.image[0].path); }
+    if (req.files?.video) { video_url = `/uploads/banners/${req.files.video[0].filename} `; uploadedFiles.push(req.files.video[0].path); }
+
+    let position = req.body.position ? parseInt(req.body.position) : null;
+    if (!position) {
+      const posResult = await pool.query(`SELECT COALESCE(MAX(position), 0) + 1 AS position FROM banners`);
+      position = posResult.rows[0].position;
+    }
+
+    let cleanCategoryId = category_id;
+    if (!category_id || category_id === 'null' || category_id === '') cleanCategoryId = null;
+
+    const result = await pool.query(
+      `INSERT INTO banners
+  (title, subtitle, button_text, link, image_url, video_url, type, category_id, is_active, position, vendor_id)
+VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING * `,
+      [title, subtitle, button_text, link, image_url, video_url, type || 'hero', cleanCategoryId, is_active === "true" || is_active === true, position, vendor_id]
+    );
+
+    res.json({ success: true, banner: result.rows[0] });
+  } catch (err) {
+    for (const filePath of uploadedFiles) { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }
+    res.status(500).json({ message: err.message || "Banner upload failed" });
+  }
+});
+
+app.put("/api/admin/banner/:id", verifyToken, verifyAdminVendorIndividualAccess, uploadBannerMedia.fields([{ name: 'image', maxCount: 1 }, { name: 'video', maxCount: 1 }]), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, subtitle, button_text, link, is_active, type, category_id, position } = req.body;
+
+    const currentRes = await pool.query("SELECT * FROM banners WHERE id = $1", [id]);
+    if (currentRes.rows.length === 0) return res.status(404).json({ message: "Banner not found" });
+    const currentBanner = currentRes.rows[0];
+
+    if (req.user.role !== 'super_admin' && currentBanner.vendor_id !== req.user.id) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    let image_url = currentBanner.image_url;
+    let video_url = currentBanner.video_url;
+
+    // Only update image if a new file was uploaded
+    if (req.files?.image && req.files.image.length > 0) {
+      image_url = `/uploads/banners/${req.files.image[0].filename} `;
+    }
+
+    // Only update video if a new file was uploaded
+    if (req.files?.video && req.files.video.length > 0) {
+      video_url = `/uploads/banners/${req.files.video[0].filename} `;
+    }
+
+    let cleanCategoryId = category_id;
+    if (category_id === 'null' || category_id === '' || category_id === undefined) {
+      cleanCategoryId = null;
+    } else {
+      cleanCategoryId = parseInt(category_id);
+    }
+
+    // Build update query dynamically to only update fields that are provided
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    // Only add fields that are actually provided in the request
+    if (title !== undefined) {
+      updates.push(`title = $${paramCount++} `);
+      values.push(title || null);
+    }
+    if (subtitle !== undefined) {
+      updates.push(`subtitle = $${paramCount++} `);
+      values.push(subtitle || null);
+    }
+    if (button_text !== undefined) {
+      updates.push(`button_text = $${paramCount++} `);
+      values.push(button_text || null);
+    }
+    if (link !== undefined) {
+      updates.push(`link = $${paramCount++} `);
+      values.push(link || null);
+    }
+    if (is_active !== undefined) {
+      updates.push(`is_active = $${paramCount++} `);
+      values.push(is_active === "true" || is_active === true);
+    }
+    if (type !== undefined) {
+      updates.push(`type = $${paramCount++} `);
+      values.push(type || 'hero');
+    }
+    if (cleanCategoryId !== undefined) {
+      updates.push(`category_id = $${paramCount++} `);
+      values.push(cleanCategoryId);
+    }
+    if (position !== undefined && position !== '') {
+      updates.push(`position = $${paramCount++} `);
+      values.push(parseInt(position));
+    }
+
+    // Always include media URLs
+    updates.push(`image_url = $${paramCount++} `);
+    values.push(image_url);
+    updates.push(`video_url = $${paramCount++} `);
+    values.push(video_url);
+
+    updates.push(`updated_at = NOW()`);
+    values.push(id);
+
+    if (updates.length > 1) {
+      const query = `UPDATE banners SET ${updates.join(", ")} WHERE id = $${paramCount} RETURNING * `;
+      const result = await pool.query(query, values);
+
+      // Clear any old files if new ones were uploaded (optional cleanup)
+      if (req.files?.image && currentBanner.image_url && currentBanner.image_url !== image_url) {
+        const oldPath = path.join(UPLOAD_BASE_PATH, currentBanner.image_url.replace('/uploads/', ''));
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+      if (req.files?.video && currentBanner.video_url && currentBanner.video_url !== video_url) {
+        const oldPath = path.join(UPLOAD_BASE_PATH, currentBanner.video_url.replace('/uploads/', ''));
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+
+      res.json({ success: true, banner: result.rows[0] });
+    } else {
+      res.json({ success: true, banner: currentBanner, message: "No changes detected" });
+    }
+  } catch (err) {
+    console.error("Banner update error:", err);
+    res.status(500).json({ message: err.message || "Banner update failed" });
+  }
+});
+
+app.get("/api/banners", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT b.* FROM banners b LEFT JOIN users u ON b.vendor_id = u.id WHERE b.is_active = true AND (b.vendor_id IS NULL OR u.store_active = true) ORDER BY b.position ASC`
+    );
+    res.json({ banners: result.rows });
+  } catch (err) {
+    res.status(500).json({ message: "Fetch banners failed" });
+  }
+});
+
+app.get("/api/admin/banners", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  let query = "SELECT * FROM banners WHERE 1=1";
+  let params = [];
+  if (req.user.role !== 'super_admin') {
+    query += " AND vendor_id = $1";
+    params.push(req.user.id);
+  }
+  query += " ORDER BY position ASC";
+  const result = await pool.query(query, params);
+  res.json({ banners: result.rows });
+});
+
+app.delete("/api/admin/banner/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  if (req.user.role !== 'super_admin') {
+    const check = await pool.query("SELECT vendor_id FROM banners WHERE id=$1", [req.params.id]);
+    if (check.rows.length === 0 || check.rows[0].vendor_id !== req.user.id) return res.status(403).json({ message: "Unauthorized" });
+  }
+  await pool.query("DELETE FROM banners WHERE id=$1", [req.params.id]);
+  res.json({ success: true });
+});
+
+app.put("/api/admin/banner/:id/toggle", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  if (req.user.role !== 'super_admin') {
+    const check = await pool.query("SELECT vendor_id FROM banners WHERE id=$1", [req.params.id]);
+    if (check.rows.length === 0 || check.rows[0].vendor_id !== req.user.id) return res.status(403).json({ message: "Unauthorized" });
+  }
+  await pool.query(`UPDATE banners SET is_active = NOT is_active WHERE id = $1`, [req.params.id]);
+  res.json({ success: true });
+});
+
+app.put("/api/admin/banners/reorder", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const banners = req.body;
+    for (let banner of banners) {
+      await pool.query(`UPDATE banners SET position = $1 WHERE id = $2`, [banner.position, banner.id]);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: "Reorder failed" });
+  }
+});
+
+// ================= CART =================
+app.post("/api/cart", verifyToken, async (req, res) => {
+  try {
+    const { product_id, quantity, variant_id, variant_name, variant_price } = req.body;
+    const userId = req.user.id;
+
+    const productCheck = await pool.query(
+      `SELECT p.id FROM products p JOIN users u ON p.vendor_id = u.id WHERE p.id = $1 AND p.is_active = true AND u.store_active = true`,
+      [product_id]
+    );
+    if (productCheck.rows.length === 0) {
+      return res.status(400).json({ message: "Product is not available" });
+    }
+
+    const existing = await pool.query(
+      `SELECT * FROM cart_items WHERE user_id = $1 AND product_id = $2 AND COALESCE(variant_id, -1) = COALESCE($3, -1)`,
+      [userId, product_id, variant_id || null]
+    );
+
+    if (existing.rows.length > 0) {
+      const result = await pool.query(
+        `UPDATE cart_items SET quantity = quantity + $1, variant_name = COALESCE($2, variant_name), variant_price = COALESCE($3, variant_price) WHERE id = $4 RETURNING *`,
+        [quantity || 1, variant_name || null, variant_price || null, existing.rows[0].id]
+      );
+      return res.json({ success: true, item: result.rows[0] });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO cart_items(user_id, product_id, quantity, variant_id, variant_name, variant_price) VALUES($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [userId, product_id, quantity || 1, variant_id || null, variant_name || null, variant_price || null]
+    );
+    res.json({ success: true, item: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: "Add to cart failed" });
+  }
+});
+
+app.get("/api/cart", verifyToken, async (req, res) => {
+  const result = await pool.query(
+    `SELECT c.*, p.name, p.price, p.old_price, p.main_image_url, p.uuid, p.product_code, cat.name as category_name, p.vendor_id, c.variant_name, c.variant_price
+     FROM cart_items c
+     JOIN products p ON c.product_id = p.id
+     JOIN users u ON p.vendor_id = u.id
+     LEFT JOIN categories cat ON p.category_id = cat.id
+     WHERE c.user_id = $1 AND p.is_active = true AND u.store_active = true`, [req.user.id]
+  );
+  res.json({ cart: result.rows });
+});
+
+app.put("/api/cart/:id", verifyToken, async (req, res) => {
+  const { quantity } = req.body;
+  await pool.query(`UPDATE cart_items SET quantity = $1 WHERE id = $2`, [quantity, req.params.id]);
+  res.json({ success: true });
+});
+
+app.delete("/api/cart/:id", verifyToken, async (req, res) => {
+  await pool.query(`DELETE FROM cart_items WHERE id = $1`, [req.params.id]);
+  res.json({ success: true });
+});
+
+// ================= WISHLIST =================
+app.post("/api/wishlist", verifyToken, async (req, res) => {
+  try {
+    const { product_id } = req.body;
+    const userId = req.user.id;
+    if (!product_id) return res.status(400).json({ message: "Product ID is required" });
+    const exists = await pool.query(`SELECT * FROM wishlist WHERE user_id = $1 AND product_id = $2`, [userId, product_id]);
+    if (exists.rows.length > 0) {
+      await pool.query(`DELETE FROM wishlist WHERE user_id = $1 AND product_id = $2`, [userId, product_id]);
+      return res.json({ message: "Removed from wishlist", type: "removed" });
+    }
+
+    const productCheck = await pool.query(
+      `SELECT p.id FROM products p JOIN users u ON p.vendor_id = u.id WHERE p.id = $1 AND p.is_active = true AND u.store_active = true`,
+      [product_id]
+    );
+    if (productCheck.rows.length === 0) {
+      return res.status(400).json({ message: "Product is not available" });
+    }
+
+    await pool.query(`INSERT INTO wishlist(user_id, product_id) VALUES($1, $2)`, [userId, product_id]);
+    res.json({ message: "Added to wishlist", type: "added" });
+  } catch (error) {
+    if (error.code === '23503') return res.status(400).json({ message: "Product no longer exists or invalid user session." });
+    res.status(500).json({ message: "Wishlist update failed" });
+  }
+});
+
+app.get("/api/wishlist", verifyToken, async (req, res) => {
+  const result = await pool.query(
+    `SELECT w.*, p.name, p.price, p.main_image_url, p.uuid, p.product_code, cat.name as category_name
+     FROM wishlist w
+     JOIN products p ON w.product_id = p.id
+     JOIN users u ON p.vendor_id = u.id
+     LEFT JOIN categories cat ON p.category_id = cat.id
+     WHERE w.user_id = $1 AND p.is_active = true AND u.store_active = true`, [req.user.id]
+  );
+  res.json({ wishlist: result.rows });
+});
+
+// ================= RETURN SYSTEM =================
+app.post("/api/user/orders/:id/return", verifyToken, uploadReturnVideo.single("video"), async (req, res) => {
+  let uploadedFilePath = null;
+  try {
+    const orderId = req.params.id;
+    const { reason } = req.body;
+    if (!req.file) throw new Error("Unboxing video is required for returns");
+    uploadedFilePath = req.file.path;
+    const videoUrl = `/uploads/returns/${req.file.filename} `;
+
+    const orderCheck = await pool.query("SELECT * FROM orders WHERE id=$1 AND user_id=$2 AND order_status='Delivered'", [orderId, req.user.id]);
+    if (orderCheck.rows.length === 0) throw new Error("Order not found or not eligible for return");
+
+    const result = await pool.query(`INSERT INTO returns(order_id, user_id, video_url, reason) VALUES($1, $2, $3, $4) RETURNING * `, [orderId, req.user.id, videoUrl, reason]);
+    res.json({ success: true, returnRequest: result.rows[0] });
+  } catch (error) {
+    if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+    res.status(500).json({ success: false, message: error.message || "Failed to submit return request" });
+  }
+});
+
+app.get("/api/user/returns", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT r.*, o.customer_name, o.total_amount FROM returns r JOIN orders o ON r.order_id = o.id WHERE r.user_id = $1 ORDER BY r.created_at DESC`, [req.user.id]);
+    res.json({ success: true, returns: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to fetch returns" });
+  }
+});
+
+// ================= RETURN SYSTEM =================
+app.get("/api/admin/returns", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    let query = `
+       SELECT DISTINCT ON(r.id)
+r.*,
+  o.customer_name,
+  o.phone,
+  u.name as user_name,
+  oi.vendor_id
+       FROM returns r
+       JOIN orders o ON r.order_id = o.id
+       JOIN users u ON r.user_id = u.id
+       LEFT JOIN order_items oi ON o.id = oi.order_id
+       WHERE 1 = 1
+  `;
+    let params = [];
+
+    if (req.user.role !== 'super_admin') {
+      query += ` AND oi.vendor_id = $1`;
+      params.push(req.user.id);
+    }
+
+    query += ` GROUP BY r.id, o.customer_name, o.phone, u.name, oi.vendor_id
+               ORDER BY r.id, CASE WHEN r.status = 'Pending' THEN 0 ELSE 1 END, r.created_at DESC`;
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, returns: result.rows });
+  } catch (error) {
+    console.error("Returns fetch error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch returns", error: error.message });
+  }
+});
+
+app.put("/api/admin/returns/:id/status", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      const check = await pool.query(`
+        SELECT r.id FROM returns r
+        JOIN orders o ON r.order_id = o.id
+        JOIN order_items oi ON o.id = oi.order_id
+        WHERE r.id = $1 AND oi.vendor_id = $2
+        LIMIT 1
+      `, [req.params.id, req.user.id]);
+      if (check.rows.length === 0) {
+        return res.status(403).json({ success: false, message: "Unauthorized" });
+      }
+    }
+
+    const { status, admin_comment } = req.body;
+    const returnId = req.params.id;
+
+    const result = await pool.query(
+      `UPDATE returns SET status = $1, admin_comment = $2, updated_at = NOW() 
+       WHERE id = $3 RETURNING * `,
+      [status, admin_comment, returnId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Return request not found" });
+    }
+
+    if (status === 'Approved') {
+      await pool.query(
+        "UPDATE orders SET order_status = 'Return Approved' WHERE id = (SELECT order_id FROM returns WHERE id = $1)",
+        [returnId]
+      );
+    }
+
+    res.json({ success: true, returnRequest: result.rows[0] });
+  } catch (error) {
+    console.error("Return status update error:", error);
+    res.status(500).json({ success: false, message: "Failed to update return status", error: error.message });
+  }
+});
+// ================= ANALYTICS / REPORTS =================
+app.get("/api/admin/reports", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const userRole = req.user.role?.toLowerCase();
+    const isVendor = userRole !== 'super_admin';
+    const vId = req.user.id;
+
+    const salesTrendRes = await pool.query(`
+SELECT
+TO_CHAR(o.created_at, 'Dy') as date,
+  SUM(COALESCE(oi.vendor_earning, oi.price * oi.quantity)):: float as revenue,
+    COUNT(DISTINCT o.id):: int as orders 
+      FROM orders o
+      JOIN order_items oi ON o.id = oi.order_id
+      WHERE o.created_at > (NOW() - ($1 || ' days')::INTERVAL)
+      ${isVendor ? 'AND oi.vendor_id = $2' : ''}
+      GROUP BY date, DATE_TRUNC('day', o.created_at)
+      ORDER BY DATE_TRUNC('day', o.created_at) ASC;
+`, isVendor ? [days, vId] : [days]);
+
+    const topProductsRes = await pool.query(`
+SELECT
+p.name,
+  SUM(oi.quantity):: int as sold,
+    SUM(COALESCE(oi.vendor_earning, oi.price * oi.quantity)):: float as revenue 
+      FROM order_items oi 
+      JOIN products p ON oi.product_id = p.id 
+      JOIN orders o ON oi.order_id = o.id
+      WHERE o.created_at > (NOW() - ($1 || ' days')::INTERVAL)
+      ${isVendor ? 'AND oi.vendor_id = $2' : ''}
+      GROUP BY p.name 
+      ORDER BY revenue DESC 
+      LIMIT 10;
+`, isVendor ? [days, vId] : [days]);
+
+    const summaryRes = await pool.query(`
+SELECT
+COALESCE(SUM(COALESCE(vendor_earning, price * quantity)), 0):: float as total_revenue,
+  COUNT(DISTINCT order_id):: int as total_orders
+      FROM order_items
+      WHERE order_id IN(SELECT id FROM orders WHERE created_at > (NOW() - ($1 || ' days'):: INTERVAL))
+      ${isVendor ? 'AND vendor_id = $2' : ''}
+`, isVendor ? [days, vId] : [days]);
+
+    res.json({
+      success: true,
+      salesData: salesTrendRes.rows,
+      topProducts: topProductsRes.rows,
+      summary: summaryRes.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Reports Error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch report data" });
+  }
+});
+
+// ================= NAVIGATION / MENUS =================
+app.get("/api/menus/:slug", async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const menu = await pool.query("SELECT * FROM menus WHERE slug = $1", [slug]);
+    if (menu.rows.length === 0) return res.status(404).json({ message: "Menu not found" });
+
+    const items = await pool.query("SELECT * FROM menu_items WHERE menu_id = $1 AND is_active = true ORDER BY position ASC", [menu.rows[0].id]);
+    res.json({ success: true, menu: menu.rows[0], items: items.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/api/admin/menus", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM menus ORDER BY name ASC");
+    res.json({ success: true, menus: result.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/admin/menus", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { name, slug } = req.body;
+    const result = await pool.query("INSERT INTO menus (name, slug) VALUES ($1, $2) RETURNING *", [name, slug]);
+    res.json({ success: true, menu: result.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/api/admin/menus/:id", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query("DELETE FROM menus WHERE id = $1", [id]);
+    res.json({ success: true, message: "Menu deleted" });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/api/admin/menus/:id/items", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const items = await pool.query("SELECT * FROM menu_items WHERE menu_id = $1 ORDER BY position ASC", [id]);
+    res.json({ success: true, items: items.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/admin/menus/:id/items", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, link, parent_id, position } = req.body;
+    const result = await pool.query("INSERT INTO menu_items (menu_id, title, link, parent_id, position) VALUES ($1, $2, $3, $4, $5) RETURNING *", [id, title, link, parent_id || null, position || 0]);
+    res.json({ success: true, item: result.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put("/api/admin/menu-items/:id", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, link, position, is_active } = req.body;
+    const result = await pool.query("UPDATE menu_items SET title=$1, link=$2, position=$3, is_active=$4 WHERE id=$5 RETURNING *", [title, link, position, is_active, id]);
+    res.json({ success: true, item: result.rows[0] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/api/admin/menu-items/:id", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query("DELETE FROM menu_items WHERE id = $1", [id]);
+    res.json({ success: true, message: "Item deleted" });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// Add this endpoint after your existing dashboard stats endpoint
+
+// ================= TODAY'S STATS ENDPOINT =================
+app.get("/api/admin/dashboard/today-stats", verifyToken, verifyAnyAdmin, async (req, res) => {
+  try {
+    const userRole = req.user.role?.toLowerCase();
+    const vendorId = req.user.id;
+
+    // Get today's date range (start of today to now)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString();
+    const nowStr = new Date().toISOString();
+
+    let orderQuery = `
+      SELECT COUNT(DISTINCT o.id) as order_count,
+  SUM(CASE WHEN o.order_status = 'Delivered' THEN o.total_amount ELSE 0 END) as earnings
+      FROM orders o
+      LEFT JOIN order_items oi ON o.id = oi.order_id
+      WHERE o.created_at BETWEEN $1 AND $2
+    `;
+
+    let params = [todayStr, nowStr];
+
+    // For vendors, filter orders that contain their products
+    if (userRole !== 'super_admin') {
+      orderQuery += ` AND oi.vendor_id = $3`;
+      params.push(vendorId);
+    }
+
+    const result = await pool.query(orderQuery, params);
+
+    res.json({
+      success: true,
+      todayOrders: parseInt(result.rows[0]?.order_count || 0),
+      todayEarnings: parseFloat(result.rows[0]?.earnings || 0)
+    });
+
+  } catch (error) {
+    console.error("Today stats error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get earning stats - FIXED to only count Paid payouts
+app.get("/api/admin/payouts/earning-stats", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const userRole = req.user.role?.toLowerCase();
+    const vendorId = req.user.id;
+
+    let query = `
+      SELECT 
+        COALESCE(SUM(CASE WHEN status = 'Paid' AND DATE_TRUNC('month', processed_at) = DATE_TRUNC('month', NOW()) THEN amount ELSE 0 END), 0) as current_month,
+        COALESCE(SUM(CASE WHEN status = 'Paid' AND DATE_TRUNC('month', processed_at) = DATE_TRUNC('month', NOW() - INTERVAL '1 month') THEN amount ELSE 0 END), 0) as last_month,
+        COALESCE(SUM(CASE WHEN status = 'Paid' THEN amount ELSE 0 END), 0) as total_earned,
+        COALESCE(SUM(CASE WHEN status = 'Pending' THEN amount ELSE 0 END), 0) as pending_settlement
+      FROM payouts
+      WHERE 1=1
+    `;
+
+    let params = [];
+    if (userRole !== 'super_admin') {
+      query += ` AND vendor_id = $1`;
+      params.push(vendorId);
+    }
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, stats: result.rows[0] });
+  } catch (err) {
+    console.error("Earning stats error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get("/api/admin/dashboard/stats-by-date", verifyToken, verifyAnyAdmin, async (req, res) => {
+  try {
+    const { date } = req.query;
+    const userRole = req.user.role?.toLowerCase();
+    const vendorId = req.user.id;
+
+    // Set date range (start of selected date to end of selected date)
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
+
+    const startDateStr = startDate.toISOString();
+    const endDateStr = endDate.toISOString();
+
+    // Helper function to build common params
+    const getBaseParams = () => {
+      let params = [startDateStr, endDateStr];
+      if (userRole !== 'super_admin') {
+        params.push(vendorId);
+      }
+      return params;
+    };
+
+    // 1. Order Overview for the selected date
+    let overviewQuery = `
+      SELECT 
+        COUNT(CASE WHEN o.order_status IN ('Placed', 'Pending', 'Processing') THEN 1 END)::int as pending,
+        COUNT(CASE WHEN o.order_status IN ('Shipped', 'On the Way', 'Out for Delivery') THEN 1 END)::int as on_the_way,
+        COUNT(CASE WHEN o.order_status = 'Delivered' THEN 1 END)::int as delivered,
+        COUNT(CASE WHEN o.order_status = 'Cancelled' THEN 1 END)::int as cancelled
+      FROM orders o
+      ${userRole !== 'super_admin' ? 'JOIN order_items oi ON o.id = oi.order_id' : ''}
+      WHERE o.created_at BETWEEN $1 AND $2
+      ${userRole !== 'super_admin' ? 'AND oi.vendor_id = $3' : ''}
+    `;
+
+    const overviewRes = await pool.query(overviewQuery, getBaseParams());
+    const dbOverview = overviewRes.rows[0];
+
+    const orderOverview = {
+      pending: dbOverview.pending || 0,
+      onTheWay: dbOverview.on_the_way || 0,
+      delivered: dbOverview.delivered || 0,
+      cancelled: dbOverview.cancelled || 0
+    };
+
+    // 2. Pending Payment for the selected date
+    let payoutQuery;
+    let payoutParams = getBaseParams();
+
+    if (userRole !== 'super_admin') {
+      payoutQuery = `
+        SELECT 
+          COUNT(*)::int as invoice_count,
+          COALESCE(SUM(amount), 0.00)::float as total_amount,
+          MAX(requested_at) as latest_date
+        FROM payouts 
+        WHERE vendor_id = $3 AND status = 'Pending' AND requested_at BETWEEN $1 AND $2
+      `;
+    } else {
+      payoutQuery = `
+        SELECT 
+          COUNT(*)::int as invoice_count,
+          COALESCE(SUM(p.amount), 0.00)::float as total_amount,
+          MAX(p.requested_at) as latest_date,
+          COALESCE(MAX(u.store_name), MAX(u.name)) as supplier_name
+        FROM payouts p
+        JOIN users u ON p.vendor_id = u.id
+        WHERE p.status = 'Pending' AND p.requested_at BETWEEN $1 AND $2
+      `;
+    }
+
+    const payoutRes = await pool.query(payoutQuery, payoutParams);
+    const dbPayout = payoutRes.rows[0];
+
+    let pendingPayment = {
+      count: 0,
+      amount: 0,
+      supplierName: userRole !== 'super_admin' ? "Jayastra Platform Admin" : "Vendor Partner",
+      issueDate: ""
+    };
+
+    if (dbPayout && dbPayout.total_amount > 0) {
+      pendingPayment = {
+        count: dbPayout.invoice_count || 0,
+        amount: parseFloat(dbPayout.total_amount) || 0,
+        supplierName: userRole !== 'super_admin' ? "Jayastra Platform Admin" : (dbPayout.supplier_name || "Vendor Partner"),
+        issueDate: dbPayout.latest_date ? new Date(dbPayout.latest_date).toLocaleDateString('en-IN', {
+          day: 'numeric', month: 'short', year: 'numeric'
+        }) : ""
+      };
+    }
+
+    // 3. Recent Orders for the selected date
+    let recentQuery = `
+      SELECT DISTINCT o.id, o.customer_name, o.created_at, o.total_amount, o.order_status,
+        u.name as user_name,
+        o.pickup_schedule_display,
+        o.shiprocket_order_id
+      FROM orders o
+      LEFT JOIN users u ON o.user_id = u.id
+      ${userRole !== 'super_admin' ? 'JOIN order_items oi ON o.id = oi.order_id' : ''}
+      WHERE o.created_at BETWEEN $1 AND $2
+      ${userRole !== 'super_admin' ? 'AND oi.vendor_id = $3' : ''}
+      ORDER BY o.created_at DESC
+      LIMIT 10
+    `;
+
+    const recentRes = await pool.query(recentQuery, getBaseParams());
+    const recentOrders = recentRes.rows;
+
+    // 4. Daily Sales for the selected date (last 7 days)
+    const dailySalesQuery = `
+      SELECT 
+        TO_CHAR(o.created_at, 'Dy') as day,
+        COALESCE(SUM(${userRole !== 'super_admin' ? 'oi.vendor_earning' : 'o.total_amount'}), 0)::float as amount,
+        DATE_TRUNC('day', o.created_at) as date_order
+      FROM orders o
+      ${userRole !== 'super_admin' ? 'JOIN order_items oi ON o.id = oi.order_id' : ''}
+      WHERE o.created_at >= (DATE($1) - INTERVAL '6 days')
+        AND o.created_at <= DATE($1) + INTERVAL '23 hours 59 minutes'
+      ${userRole !== 'super_admin' ? 'AND oi.vendor_id = $2' : ''}
+      GROUP BY DATE_TRUNC('day', o.created_at), TO_CHAR(o.created_at, 'Dy')
+      ORDER BY DATE_TRUNC('day', o.created_at) ASC
+    `;
+
+    let salesParams = [date];
+    if (userRole !== 'super_admin') {
+      salesParams.push(vendorId);
+    }
+
+    const salesRes = await pool.query(dailySalesQuery, salesParams);
+    const dailySales = salesRes.rows;
+
+    // 5. Stats (overall counts for the selected date)
+    let statsQuery = `
+      SELECT 
+        COUNT(DISTINCT o.id)::int as total_orders,
+        COALESCE(SUM(${userRole !== 'super_admin' ? 'oi.vendor_earning' : 'o.total_amount'}), 0)::float as total_revenue
+      FROM orders o
+      ${userRole !== 'super_admin' ? 'JOIN order_items oi ON o.id = oi.order_id' : ''}
+      WHERE o.created_at BETWEEN $1 AND $2
+      ${userRole !== 'super_admin' ? 'AND oi.vendor_id = $3' : ''}
+    `;
+
+    const statsRes = await pool.query(statsQuery, getBaseParams());
+
+    // 6. Product count for the selected date
+    let productQuery = `
+      SELECT COUNT(*)::int as total_products
+      FROM products
+      WHERE created_at BETWEEN $1 AND $2
+      ${userRole !== 'super_admin' ? 'AND vendor_id = $3' : ''}
+    `;
+
+    const productRes = await pool.query(productQuery, getBaseParams());
+
+    // 7. User count (for super admin only)
+    let userCount = 0;
+    if (userRole === 'super_admin') {
+      const userRes = await pool.query(
+        "SELECT COUNT(*)::int as total_users FROM users WHERE created_at BETWEEN $1 AND $2 AND role = 'user'",
+        [startDateStr, endDateStr]
+      );
+      userCount = userRes.rows[0]?.total_users || 0;
+    }
+
+    // 8. Stock notification count
+    let stockQuery = `
+      SELECT COUNT(*)::int as stock_notification_count
+      FROM stock_notifications
+      WHERE created_at BETWEEN $1 AND $2
+      ${userRole !== 'super_admin' ? 'AND vendor_id = $3' : ''}
+    `;
+
+    const stockRes = await pool.query(stockQuery, getBaseParams());
+
+    const stats = {
+      totalProducts: productRes.rows[0]?.total_products || 0,
+      totalOrders: statsRes.rows[0]?.total_orders || 0,
+      totalUsers: userCount,
+      totalRevenue: parseFloat(statsRes.rows[0]?.total_revenue || 0),
+      stockNotificationCount: stockRes.rows[0]?.stock_notification_count || 0
+    };
+
+    res.json({
+      success: true,
+      stats,
+      orderOverview,
+      pendingPayment,
+      recentOrders,
+      dailySales
+    });
+
+  } catch (error) {
+    console.error("Dashboard stats by date error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+      stats: {
+        totalProducts: 0,
+        totalOrders: 0,
+        totalUsers: 0,
+        totalRevenue: 0,
+        stockNotificationCount: 0
+      },
+      orderOverview: { pending: 0, onTheWay: 0, delivered: 0, cancelled: 0 },
+      pendingPayment: { count: 0, amount: 0, supplierName: "", issueDate: "" },
+      recentOrders: [],
+      dailySales: []
+    });
+  }
+});
+
+
+// ================= SHIPROCKET INTEGRATION (DATABASE DRIVEN) =================
+let shiprocketToken = null;
+let tokenExpiry = null;
+let cachedShiprocketConfig = null;
+let configLastFetched = null;
+
+const getShiprocketConfig = async (returnRealPassword = false) => {
+  // Cache config for 1 minute to reduce DB calls
+  if (cachedShiprocketConfig && configLastFetched && (Date.now() - configLastFetched) < 60000) {
+    return cachedShiprocketConfig;
+  }
+
+  try {
+    const result = await pool.query(
+      "SELECT key, value FROM settings WHERE key IN ('shiprocket_email', 'shiprocket_password', 'shiprocket_pickup_pincode', 'shiprocket_webhook_secret')"
+    );
+
+    const config = {
+      shiprocket_email: '',
+      shiprocket_password: '',
+      shiprocket_pickup_pincode: '518508',
+      shiprocket_webhook_secret: ''
+    };
+
+    result.rows.forEach(row => {
+      if (row.key === 'shiprocket_password') {
+        config[row.key] = row.value || '';
+      } else {
+        config[row.key] = row.value || '';
+      }
+    });
+
+    console.log("Shiprocket config loaded from DB:", {
+      hasEmail: !!config.shiprocket_email,
+      hasPassword: !!config.shiprocket_password && config.shiprocket_password !== '********',
+      passwordLength: config.shiprocket_password ? config.shiprocket_password.length : 0,
+      pickupPincode: config.shiprocket_pickup_pincode
+    });
+
+    cachedShiprocketConfig = config;
+    configLastFetched = Date.now();
+
+    return config;
+  } catch (error) {
+    console.error("Failed to fetch Shiprocket config:", error);
+    return {
+      shiprocket_email: '',
+      shiprocket_password: '',
+      shiprocket_pickup_pincode: '518508',
+      shiprocket_webhook_secret: ''
+    };
+  }
+};
+
+// Clear Shiprocket cache when settings are updated
+const clearShiprocketCache = () => {
+  cachedShiprocketConfig = null;
+  configLastFetched = null;
+  shiprocketToken = null;
+  tokenExpiry = null;
+  console.log("Shiprocket cache cleared");
+};
+
+const authenticateShiprocket = async (retryCount = 0) => {
+  // Check if token is still valid (8 days expiry)
+  if (shiprocketToken && tokenExpiry && Date.now() < tokenExpiry) {
+    console.log("✅ Using cached Shiprocket token, expires in:", Math.round((tokenExpiry - Date.now()) / 1000 / 60 / 60), "hours");
+    return shiprocketToken;
+  }
+
+  // Get credentials from database
+  const config = await getShiprocketConfig(true);
+  const email = config.shiprocket_email;
+  const password = config.shiprocket_password;
+
+  console.log("🔐 Authenticating with Shiprocket - Email:", email ? email.substring(0, 3) + '***' : 'none');
+
+  if (!email || email === '' || !password || password === '' || password === '********') {
+    console.error("❌ Shiprocket credentials not configured in settings");
+    throw new Error("Shiprocket credentials not configured. Please add them in Settings page.");
+  }
+
+  try {
+    console.log("📡 Calling Shiprocket login API...");
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+    const response = await fetch("https://apiv2.shiprocket.in/v1/external/auth/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify({
+        email: email.trim(),
+        password: password
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    console.log("📡 Shiprocket response status:", response.status);
+
+    const responseText = await response.text();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error("❌ Failed to parse Shiprocket response:", parseError.message);
+      throw new Error(`Invalid response from Shiprocket: ${responseText.substring(0, 100)}`);
+    }
+
+    if (response.status === 200 && data.token) {
+      shiprocketToken = data.token;
+      // Set expiry to 8 days (Shiprocket tokens last 10 days, using 8 for safety)
+      tokenExpiry = Date.now() + (8 * 24 * 60 * 60 * 1000);
+      console.log("✅ Shiprocket authenticated successfully, token expires in 8 days");
+      return shiprocketToken;
+    } else {
+      console.error("❌ Shiprocket auth failed:", data);
+
+      let errorMessage = "Shiprocket authentication failed";
+      if (data.message) {
+        if (data.message.toLowerCase().includes("invalid") || data.message.toLowerCase().includes("wrong")) {
+          errorMessage = "Invalid Shiprocket credentials. Please check your email and password in Settings.";
+        } else if (data.message.toLowerCase().includes("not found")) {
+          errorMessage = "Shiprocket account not found. Please verify your credentials.";
+        } else {
+          errorMessage = data.message;
+        }
+      }
+
+      if (response.status === 401) {
+        errorMessage = "Authentication failed (401). Invalid Shiprocket credentials.";
+      } else if (response.status === 403) {
+        errorMessage = "Access denied (403). Please ensure your Shiprocket account has API access enabled.";
+      }
+
+      throw new Error(errorMessage);
+    }
+  } catch (err) {
+    console.error("❌ Shiprocket Auth Error:", err.message);
+
+    if (err.name === 'AbortError') {
+      throw new Error("Shiprocket connection timeout. Please check your internet connection.");
+    }
+
+    if (err.message.includes("fetch") || err.message.includes("network")) {
+      throw new Error("Network error connecting to Shiprocket. Please check your internet connection and firewall settings.");
+    }
+
+    throw err;
+  }
+};
+
+// Helper function to extract address components from order
+const extractAddressComponents = async (order) => {
+  let fullAddress = order.address || '';
+  let houseNo = order.house_no || '';
+  let streetArea = order.street_area || '';
+  let landmark = order.landmark || '';
+  let city = order.city || '';
+  let state = order.state || '';
+  let pincode = order.pincode || '';
+  let country = order.country || 'India';
+
+  // If we have house_no and street_area but no full address, construct it
+  if ((!fullAddress || fullAddress === '') && (houseNo || streetArea)) {
+    const parts = [];
+    if (houseNo) parts.push(houseNo);
+    if (streetArea) parts.push(streetArea);
+    if (landmark) parts.push(landmark);
+    if (city) parts.push(city);
+    if (state) parts.push(state);
+    if (pincode) parts.push(pincode);
+    fullAddress = parts.join(', ');
+  }
+
+  // Try to extract pincode from full address if not already present
+  if (!pincode && fullAddress) {
+    const pinMatch = fullAddress.match(/\b\d{6}\b/);
+    if (pinMatch) {
+      pincode = pinMatch[0];
+    }
+  }
+
+  // Try to extract city from full address if not already present
+  if (!city && fullAddress) {
+    // Try common patterns
+    const patterns = [
+      /city[:\s]+([A-Za-z\s]+)/i,
+      /,\s*([A-Za-z\s]+?)\s*,\s*[A-Za-z\s]+?\s*\d{6}/,
+      /\s+([A-Za-z\s]+?)\s*[-–]\s*\d{6}/
+    ];
+
+    for (const pattern of patterns) {
+      const match = fullAddress.match(pattern);
+      if (match && match[1] && match[1].trim()) {
+        city = match[1].trim();
+        break;
+      }
+    }
+
+    // If still no city, try splitting by commas
+    if (!city && fullAddress.includes(',')) {
+      const parts = fullAddress.split(',');
+      if (parts.length >= 3) {
+        city = parts[parts.length - 3]?.trim() || '';
+      } else if (parts.length >= 2) {
+        city = parts[parts.length - 2]?.trim() || '';
+      }
+    }
+  }
+
+  // Try to extract state from full address if not already present
+  if (!state && fullAddress) {
+    const stateMatch = fullAddress.match(/state[:\s]+([A-Za-z\s]+)/i);
+    if (stateMatch && stateMatch[1]) {
+      state = stateMatch[1].trim();
+    } else if (fullAddress.includes(',')) {
+      const parts = fullAddress.split(',');
+      if (parts.length >= 2) {
+        const possibleState = parts[parts.length - 2]?.trim() || '';
+        // Check if it's a state (not a city with pincode)
+        if (possibleState && !possibleState.match(/\d/) && possibleState.length > 2) {
+          state = possibleState;
+        }
+      }
+    }
+  }
+
+  // Ensure all required fields have valid values
+  if (!city || city === '' || city === 'City' || city === 'city' || city === 'NA' || city === 'n/a') {
+    city = "Unknown City";
+  }
+
+  if (!state || state === '' || state === 'State' || state === 'state' || state === 'NA' || state === 'n/a') {
+    state = "Unknown State";
+  }
+
+  if (!pincode || pincode === '' || !/^\d{6}$/.test(pincode)) {
+    pincode = "500001"; // Default pincode
+  }
+
+  // Ensure address is not empty
+  if (!fullAddress || fullAddress === '') {
+    fullAddress = `${houseNo ? houseNo + ', ' : ''}${streetArea ? streetArea : ''}${city ? ', ' + city : ''}${state ? ', ' + state : ''} ${pincode} `;
+  }
+
+  // Clean up address - remove any undefined or null values
+  fullAddress = fullAddress.replace(/undefined/g, '').replace(/null/g, '').replace(/,\s*,/g, ',').replace(/,\s+$/g, '').trim();
+
+  if (!fullAddress || fullAddress === '') {
+    fullAddress = "Address not specified";
+  }
+
+  // Limit address length
+  fullAddress = fullAddress.substring(0, 200);
+
+  console.log("Extracted Address Components:", {
+    fullAddress,
+    houseNo,
+    streetArea,
+    landmark,
+    city,
+    state,
+    pincode,
+    country
+  });
+
+  return {
+    fullAddress,
+    houseNo: houseNo || '',
+    streetArea: streetArea || '',
+    landmark: landmark || '',
+    city: city || 'Unknown City',
+    state: state || 'Unknown State',
+    pincode: pincode || '500001',
+    country: country || 'India'
+  };
+};
+
+
+app.post("/api/admin/orders/:id/shiprocket", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const { pickup_location_id } = req.body;
+
+    console.log("Received push request for order:", orderId);
+    console.log("Received pickup_location_id:", pickup_location_id);
+    console.log("Full request body:", req.body);
+
+    // Check authorization for non-super admins
+    if (req.user.role !== 'super_admin') {
+      const orderCheck = await pool.query(
+        `SELECT DISTINCT o.id FROM orders o
+         JOIN order_items oi ON o.id = oi.order_id
+         WHERE o.id = $1 AND oi.vendor_id = $2`,
+        [orderId, req.user.id]
+      );
+      if (orderCheck.rows.length === 0) {
+        return res.status(403).json({ success: false, message: "Unauthorized" });
+      }
+    }
+
+    // Get order details
+    const orderRes = await pool.query(`SELECT * FROM orders WHERE id = $1`, [orderId]);
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    const order = orderRes.rows[0];
+
+    // Check if already pushed
+    if (order.shiprocket_order_id) {
+      return res.status(400).json({ success: false, message: "Order already pushed to Shiprocket" });
+    }
+
+    // Extract and validate address components
+    const addressComponents = await extractAddressComponents(order);
+
+    const missingFields = [];
+    if (!addressComponents.city || addressComponents.city === 'Unknown City') missingFields.push('City');
+    if (!addressComponents.state || addressComponents.state === 'Unknown State') missingFields.push('State');
+    if (!addressComponents.pincode || addressComponents.pincode === '500001') missingFields.push('Pincode');
+
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Missing delivery address: ${missingFields.join(', ')}. Please update order address first.`,
+        missingFields
+      });
+    }
+
+    // Validate pickup_location_id is provided
+    if (!pickup_location_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Please select a pickup location for this order",
+        action: "select_pickup"
+      });
+    }
+
+    // Fetch the specific pickup location from Shiprocket
+    let selectedPickupLocation = null;
+    let token;
+
+    try {
+      token = await authenticateShiprocket();
+    } catch (authError) {
+      console.error("Shiprocket auth error:", authError.message);
+      return res.status(401).json({
+        success: false,
+        message: "Shiprocket authentication failed. Please check your credentials in Settings.",
+        error: authError.message
+      });
+    }
+
+    // First, get all pickup locations to find the selected one
+    const pickupListResponse = await fetch("https://apiv2.shiprocket.in/v1/external/settings/company/pickup", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    const pickupListData = await pickupListResponse.json();
+    let pickupLocations = [];
+
+    // Extract pickup locations from response
+    if (pickupListData.data && pickupListData.data.shipping_address) {
+      pickupLocations = pickupListData.data.shipping_address;
+    } else if (pickupListData.data && pickupListData.data.pickup_locations) {
+      pickupLocations = pickupListData.data.pickup_locations;
+    } else if (pickupListData.pickup_locations) {
+      pickupLocations = pickupListData.pickup_locations;
+    }
+
+    // Find the selected location
+    const foundLocation = pickupLocations.find(loc =>
+      String(loc.pickup_location_id) === String(pickup_location_id) ||
+      String(loc.id) === String(pickup_location_id)
+    );
+
+    if (!foundLocation) {
+      console.error("Pickup location not found with ID:", pickup_location_id);
+      console.log("Available locations:", pickupLocations.map(l => ({ id: l.pickup_location_id || l.id, name: l.pickup_location || l.name })));
+
+      return res.status(400).json({
+        success: false,
+        message: `Selected pickup location (ID: ${pickup_location_id}) not found in Shiprocket. Please refresh and try again.`,
+        available_locations: pickupLocations.map(l => ({ id: l.pickup_location_id || l.id, name: l.pickup_location || l.name }))
+      });
+    }
+
+    selectedPickupLocation = {
+      id: foundLocation.pickup_location_id || foundLocation.id,
+      name: foundLocation.pickup_location || foundLocation.name,
+      address: foundLocation.address,
+      address_2: foundLocation.address_2,
+      city: foundLocation.city,
+      state: foundLocation.state,
+      pincode: foundLocation.pin_code || foundLocation.pincode
+    };
+
+    // Save the selected pickup location details on the order so the admin UI can show them later.
+    await pool.query(
+      `UPDATE orders SET
+         pickup_location_name = $1,
+         pickup_address_line1 = $2,
+         pickup_address_line2 = $3,
+         pickup_city = $4,
+         pickup_state = $5,
+         pickup_pincode = $6,
+         updated_at = NOW()
+       WHERE id = $7`,
+      [
+        selectedPickupLocation.name,
+        selectedPickupLocation.address,
+        selectedPickupLocation.address_2,
+        selectedPickupLocation.city,
+        selectedPickupLocation.state,
+        selectedPickupLocation.pincode,
+        orderId
+      ]
+    );
+
+    console.log("Selected pickup location saved to order:", selectedPickupLocation);
+
+    console.log("Selected pickup location:", selectedPickupLocation);
+
+    // Get order items with product details
+    const itemsRes = await pool.query(
+      `SELECT oi.*, p.name, p.sku, p.weight, p.length, p.width, p.height, p.product_code
+       FROM order_items oi
+       JOIN products p ON oi.product_id = p.id
+       WHERE oi.order_id = $1`,
+      [orderId]
+    );
+
+    if (itemsRes.rows.length === 0) {
+      return res.status(400).json({ success: false, message: "No items found in order" });
+    }
+
+    // Prepare order items for Shiprocket
+    const orderItems = itemsRes.rows.map(item => ({
+      name: item.name.substring(0, 100),
+      sku: item.sku || item.product_code || `SKU-${item.product_id}`,
+      units: parseInt(item.quantity),
+      selling_price: parseFloat(item.price),
+      discount: "",
+      tax: ""
+    }));
+
+    // Calculate package dimensions
+    const pkgWeight = itemsRes.rows.reduce((sum, item) => sum + (parseFloat(item.weight || 0.5) * parseInt(item.quantity)), 0.5);
+    const maxLen = Math.max(...itemsRes.rows.map(i => parseFloat(i.length || 10)), 10);
+    const maxWid = Math.max(...itemsRes.rows.map(i => parseFloat(i.width || 10)), 10);
+    const maxHei = itemsRes.rows.reduce((sum, item) => sum + (parseFloat(item.height || 5) * parseInt(item.quantity)), 5);
+
+    // Build billing address
+    let billingAddress = addressComponents.fullAddress;
+    if (!billingAddress || billingAddress === 'Address not specified') {
+      billingAddress = `${addressComponents.houseNo ? addressComponents.houseNo + ', ' : ''}${addressComponents.streetArea ? addressComponents.streetArea : ''}`;
+    }
+
+    if (!billingAddress || billingAddress === '') {
+      billingAddress = "Address not specified";
+    }
+
+    billingAddress = billingAddress.substring(0, 200);
+
+    // Determine payment method
+    const isPrepaid = order.payment_method === 'Prepaid' || order.payment_method === 'RAZORPAY' || order.payment_method === 'Online';
+
+    // Create Shiprocket order payload
+    const payload = {
+      order_id: `JAYASTRA-${order.id}`,
+      order_date: new Date(order.created_at).toISOString().split('T')[0] + " 10:00",
+      pickup_location: selectedPickupLocation.name,
+      billing_customer_name: (order.customer_name || "Customer").substring(0, 100),
+      billing_last_name: "",
+      billing_address: billingAddress,
+      billing_address_2: (addressComponents.landmark || "").substring(0, 100),
+      billing_city: addressComponents.city,
+      billing_pincode: addressComponents.pincode,
+      billing_state: addressComponents.state,
+      billing_country: addressComponents.country,
+      billing_email: (order.email || "customer@example.com").substring(0, 100),
+      billing_phone: (order.phone || "9999999999").substring(0, 20),
+      shipping_is_billing: true,
+      order_items: orderItems,
+      payment_method: isPrepaid ? 'Prepaid' : 'COD',
+      sub_total: parseFloat(order.total_amount),
+      length: Math.max(maxLen, 10),
+      breadth: Math.max(maxWid, 10),
+      height: Math.max(maxHei, 5),
+      weight: Math.max(pkgWeight, 0.5)
+    };
+
+    console.log("Shiprocket order payload:", JSON.stringify(payload, null, 2));
+
+    // Create order in Shiprocket
+    let fetchRes;
+    let result;
+
+    try {
+      fetchRes = await fetch("https://apiv2.shiprocket.in/v1/external/orders/create/adhoc", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const responseText = await fetchRes.text();
+      console.log("Shiprocket order creation raw response:", responseText);
+
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error("Failed to parse Shiprocket order response:", parseError.message);
+        return res.status(502).json({
+          success: false,
+          message: `Shiprocket API returned an invalid JSON response. Please try again.`,
+          raw_response: responseText.substring(0, 200)
+        });
+      }
+    } catch (fetchError) {
+      console.error("Network error creating Shiprocket order:", fetchError.message);
+      return res.status(502).json({
+        success: false,
+        message: "Network error connecting to Shiprocket. Please check your internet connection and try again.",
+        error: fetchError.message
+      });
+    }
+
+    console.log("Shiprocket order creation response:", JSON.stringify(result, null, 2));
+
+    if (fetchRes.ok && (result.order_id || result.shipment_id)) {
+      const srOrderId = result.order_id ? result.order_id.toString() : null;
+      const srShipmentId = result.shipment_id ? result.shipment_id.toString() : null;
+
+      // Save pickup schedule to local order if available
+      const saveOrderPickupSchedule = async (schedule) => {
+        if (!schedule) return;
+        const display = schedule.display || (schedule.date && schedule.time ? `${schedule.date} ${schedule.time}` : schedule.date || schedule.time);
+        await pool.query(
+          `UPDATE orders
+           SET pickup_schedule_display = $1,
+               pickup_schedule_date = $2,
+               pickup_schedule_time = $3
+           WHERE id = $4`,
+          [display || null, schedule.date || schedule.dateTime || null, schedule.time || null, orderId]
+        );
+      };
+
+      const srPickupSchedule = parseShiprocketPickupSchedule(result);
+      if (srPickupSchedule) {
+        await saveOrderPickupSchedule(srPickupSchedule);
+      }
+
+      // Update local order with Shiprocket IDs
+      await pool.query(
+        `UPDATE orders 
+         SET shiprocket_order_id = $1, shiprocket_shipment_id = $2, updated_at = NOW() 
+         WHERE id = $3`,
+        [srOrderId, srShipmentId, orderId]
+      );
+
+      // ========== AUTO-GENERATE AWB IMMEDIATELY ==========
+      let awbCode = null;
+
+      if (srShipmentId) {
+        try {
+          console.log(`🔄 Attempting to auto-generate AWB for shipment ${srShipmentId}...`);
+
+          // Wait a moment for Shiprocket to process the order
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
+          // Method 1: Try to assign AWB directly
+          const awbRes = await fetch("https://apiv2.shiprocket.in/v1/external/courier/assign/awb", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({ shipment_id: parseInt(srShipmentId) })
+          });
+
+          const awbData = await awbRes.json();
+          console.log("AWB assign response:", JSON.stringify(awbData, null, 2));
+
+          // Extract AWB from response
+          if (awbData.awb_code) {
+            awbCode = awbData.awb_code;
+          } else if (awbData.awb_assign_status === 1 && awbData.awb_code) {
+            awbCode = awbData.awb_code;
+          } else if (awbData.data && awbData.data.awb_code) {
+            awbCode = awbData.data.awb_code;
+          } else if (awbData.data && awbData.data.awb) {
+            awbCode = awbData.data.awb;
+          }
+
+          // If direct assignment didn't give AWB, fetch shipment details
+          if (!awbCode) {
+            console.log("Fetching shipment details for AWB...");
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            const shipmentRes = await fetch(`https://apiv2.shiprocket.in/v1/external/shipments/${srShipmentId}`, {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+              }
+            });
+
+            const shipmentData = await shipmentRes.json();
+            console.log("Shipment details:", JSON.stringify(shipmentData, null, 2));
+
+            const shipmentSchedule = parseShiprocketPickupSchedule(shipmentData);
+            if (shipmentSchedule) {
+              await saveOrderPickupSchedule(shipmentSchedule);
+            }
+
+            if (shipmentData.data) {
+              awbCode = shipmentData.data.awb_code || shipmentData.data.awb;
+            }
+            if (!awbCode && shipmentData.awb_code) {
+              awbCode = shipmentData.awb_code;
+            }
+            if (!awbCode && shipmentData.awb) {
+              awbCode = shipmentData.awb;
+            }
+          }
+
+          if (awbCode) {
+            await pool.query(
+              `UPDATE orders SET awb_code = $1 WHERE id = $2`,
+              [awbCode, orderId]
+            );
+            console.log(`✅ AWB auto-generated successfully: ${awbCode}`);
+          } else {
+            console.log("⚠️ AWB not immediately available. It will be generated by Shiprocket automatically.");
+
+            // Try one more time after a longer delay
+            await new Promise(resolve => setTimeout(resolve, 5000));
+
+            const retryShipmentRes = await fetch(`https://apiv2.shiprocket.in/v1/external/shipments/${srShipmentId}`, {
+              method: "GET",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+              }
+            });
+
+            const retryShipmentData = await retryShipmentRes.json();
+            const retryShipmentSchedule = parseShiprocketPickupSchedule(retryShipmentData);
+            if (retryShipmentSchedule) {
+              await saveOrderPickupSchedule(retryShipmentSchedule);
+            }
+            if (retryShipmentData.data && retryShipmentData.data.awb_code) {
+              awbCode = retryShipmentData.data.awb_code;
+              await pool.query(
+                `UPDATE orders SET awb_code = $1 WHERE id = $2`,
+                [awbCode, orderId]
+              );
+              console.log(`✅ AWB found on retry: ${awbCode}`);
+            }
+          }
+        } catch (awbErr) {
+          console.error("Auto AWB assignment error:", awbErr.message);
+          // Don't fail the whole operation if AWB generation fails
+          // Shiprocket will generate it later
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: awbCode ? "Order pushed to Shiprocket with AWB! 🚀" : "Order pushed to Shiprocket successfully! AWB will be generated automatically by Shiprocket within a few minutes.",
+        pickup_location_used: selectedPickupLocation.name,
+        shiprocket_order_id: srOrderId,
+        shiprocket_shipment_id: srShipmentId,
+        awb_code: awbCode,
+        data: result
+      });
+    } else {
+      console.error("Shiprocket order creation failed:", result);
+
+      let errorMessage = result?.message || "Failed to push to Shiprocket";
+      if (result?.errors) {
+        if (Array.isArray(result.errors)) {
+          errorMessage = result.errors.join(", ");
+        } else if (typeof result.errors === 'object') {
+          errorMessage = Object.values(result.errors).flat().join(", ");
+        }
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: errorMessage,
+        errors: result?.errors,
+        pickup_location_used: selectedPickupLocation?.name
+      });
+    }
+  } catch (error) {
+    console.error("Shiprocket push error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Server error pushing order",
+      suggestion: "Please try again or contact support if issue persists."
+    });
+  }
+});
+
+// ================= SHIPROCKET PICKUP ADDRESSES FETCH =================
+// ================= SHIPROCKET PICKUP ADDRESSES FETCH (FIXED) =================
+app.get("/api/shiprocket/pickup-locations", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    console.log("📡 Fetching pickup locations from Shiprocket...");
+
+    const token = await authenticateShiprocket();
+
+    // Primary endpoint
+    const response = await fetch("https://apiv2.shiprocket.in/v1/external/settings/company/pickup", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    const responseText = await response.text();
+    console.log("Shiprocket pickup response status:", response.status);
+    console.log("Shiprocket pickup response preview:", responseText.substring(0, 500));
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error("Failed to parse response:", parseError.message);
+      return res.status(502).json({
+        success: false,
+        message: "Invalid response from Shiprocket API",
+        raw_response: responseText.substring(0, 200)
+      });
+    }
+
+    let pickupLocations = [];
+
+    if (response.ok && data) {
+      // Check for different possible response structures
+      // Structure 1: data.data.shipping_address (from your debug output)
+      if (data.data && data.data.shipping_address && Array.isArray(data.data.shipping_address)) {
+        pickupLocations = data.data.shipping_address;
+        console.log(`✅ Found ${pickupLocations.length} pickup locations in shipping_address`);
+      }
+      // Structure 2: data.data.pickup_locations
+      else if (data.data && data.data.pickup_locations && Array.isArray(data.data.pickup_locations)) {
+        pickupLocations = data.data.pickup_locations;
+        console.log(`✅ Found ${pickupLocations.length} pickup locations in pickup_locations`);
+      }
+      // Structure 3: data.pickup_locations
+      else if (data.pickup_locations && Array.isArray(data.pickup_locations)) {
+        pickupLocations = data.pickup_locations;
+        console.log(`✅ Found ${pickupLocations.length} pickup locations in pickup_locations (root)`);
+      }
+      // Structure 4: data.data is an array
+      else if (data.data && Array.isArray(data.data)) {
+        pickupLocations = data.data;
+        console.log(`✅ Found ${pickupLocations.length} pickup locations in data array`);
+      }
+      // Structure 5: data is an array
+      else if (Array.isArray(data)) {
+        pickupLocations = data;
+        console.log(`✅ Found ${pickupLocations.length} pickup locations in root array`);
+      }
+      // Structure 6: Check for shipping_address at root level
+      else if (data.shipping_address && Array.isArray(data.shipping_address)) {
+        pickupLocations = data.shipping_address;
+        console.log(`✅ Found ${pickupLocations.length} pickup locations in shipping_address (root)`);
+      }
+
+      if (pickupLocations.length === 0) {
+        console.log("No pickup locations found in any known structure");
+        console.log("Available keys in response:", Object.keys(data));
+        if (data.data) console.log("Data keys:", Object.keys(data.data));
+      }
+
+      // Format the response for frontend
+      const formattedLocations = pickupLocations.map(location => ({
+        id: location.pickup_location_id || location.id,
+        name: location.pickup_location || location.name || location.pickup_location_name || "Unnamed Location",
+        address: location.address || "",
+        address_2: location.address_2 || "",
+        city: location.city || "",
+        state: location.state || "",
+        pincode: location.pin_code || location.pincode || "",
+        country: location.country || "India",
+        phone: location.phone || "",
+        email: location.email || "",
+        is_default: location.is_default || false,
+        // Keep original data for debugging if needed
+        original: location
+      }));
+
+      res.json({
+        success: true,
+        pickup_locations: formattedLocations,
+        count: formattedLocations.length,
+        raw_structure: {
+          has_shipping_address: !!(data.data?.shipping_address || data.shipping_address),
+          has_pickup_locations: !!(data.data?.pickup_locations || data.pickup_locations)
+        }
+      });
+    } else {
+      console.error("Shiprocket API returned error:", data);
+      res.json({
+        success: true,
+        pickup_locations: [],
+        message: data?.message || "No pickup locations found in Shiprocket",
+        error_details: data?.errors
+      });
+    }
+  } catch (error) {
+    console.error("❌ Fetch pickup locations error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch pickup locations from Shiprocket",
+      pickup_locations: []
+    });
+  }
+});
+
+// ================= SHIPROCKET DEBUG ENDPOINT =================
+// Update the debug endpoint to properly detect shipping_address
+app.get("/api/admin/debug/shiprocket-full", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const results = {
+      timestamp: new Date().toISOString(),
+      credentials_check: {},
+      authentication: {},
+      pickup_locations: {},
+      api_status: {}
+    };
+
+    // Step 1: Check credentials in database
+    const config = await getShiprocketConfig(true);
+    results.credentials_check = {
+      has_email: !!config.shiprocket_email && config.shiprocket_email !== '',
+      email_value: config.shiprocket_email ? config.shiprocket_email.substring(0, 3) + '***' : null,
+      has_password: !!config.shiprocket_password && config.shiprocket_password !== '' && config.shiprocket_password !== '********',
+      password_length: config.shiprocket_password ? config.shiprocket_password.length : 0,
+      pickup_pincode: config.shiprocket_pickup_pincode || '518508'
+    };
+
+    if (!results.credentials_check.has_email || !results.credentials_check.has_password) {
+      return res.json({
+        success: false,
+        message: "Shiprocket credentials not configured in database",
+        debug_info: results
+      });
+    }
+
+    // Step 2: Try to authenticate
+    try {
+      const token = await authenticateShiprocket();
+      results.authentication = {
+        success: true,
+        message: "Authentication successful",
+        token_preview: token ? token.substring(0, 30) + '...' : null
+      };
+
+      // Step 3: Test pickup locations API
+      const pickupResponse = await fetch("https://apiv2.shiprocket.in/v1/external/settings/company/pickup", {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        }
+      });
+
+      const responseText = await pickupResponse.text();
+      let pickupData = null;
+
+      try {
+        pickupData = JSON.parse(responseText);
+      } catch (e) {
+        pickupData = { parse_error: e.message };
+      }
+
+      // Check for pickup locations in various possible structures
+      let locationsCount = 0;
+      let locationsSource = null;
+
+      if (pickupData?.data?.shipping_address && Array.isArray(pickupData.data.shipping_address)) {
+        locationsCount = pickupData.data.shipping_address.length;
+        locationsSource = "data.shipping_address";
+      } else if (pickupData?.data?.pickup_locations && Array.isArray(pickupData.data.pickup_locations)) {
+        locationsCount = pickupData.data.pickup_locations.length;
+        locationsSource = "data.pickup_locations";
+      } else if (pickupData?.pickup_locations && Array.isArray(pickupData.pickup_locations)) {
+        locationsCount = pickupData.pickup_locations.length;
+        locationsSource = "pickup_locations";
+      } else if (pickupData?.shipping_address && Array.isArray(pickupData.shipping_address)) {
+        locationsCount = pickupData.shipping_address.length;
+        locationsSource = "shipping_address";
+      } else if (pickupData?.data && Array.isArray(pickupData.data)) {
+        locationsCount = pickupData.data.length;
+        locationsSource = "data array";
+      }
+
+      results.pickup_locations = {
+        status: pickupResponse.status,
+        ok: pickupResponse.ok,
+        content_type: pickupResponse.headers.get('content-type'),
+        response_preview: responseText.substring(0, 500),
+        locations_source: locationsSource,
+        locations_count: locationsCount,
+        data_keys: Object.keys(pickupData || {}),
+        data_data_keys: pickupData?.data ? Object.keys(pickupData.data) : []
+      };
+
+      // If we found shipping_address, include sample data
+      if (pickupData?.data?.shipping_address && pickupData.data.shipping_address.length > 0) {
+        results.pickup_locations.sample_location = pickupData.data.shipping_address[0];
+      }
+
+      res.json({
+        success: true,
+        debug_info: results,
+        recommendation: locationsCount === 0 ?
+          "No pickup locations found. Please add pickup locations in your Shiprocket dashboard under Settings → Company Details → Pickup Locations." :
+          `Pickup locations found successfully! Found ${locationsCount} location(s) in ${locationsSource}.`
+      });
+
+    } catch (authError) {
+      results.authentication = {
+        success: false,
+        message: authError.message,
+        error: authError.toString()
+      };
+
+      res.json({
+        success: false,
+        message: "Authentication failed. Please check your Shiprocket credentials.",
+        debug_info: results
+      });
+    }
+  } catch (error) {
+    console.error("Debug endpoint error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+      stack: error.stack
+    });
+  }
+});
+
+app.post("/api/admin/orders/:id/awb", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+
+    // Check authorization for non-super admins
+    if (req.user.role !== 'super_admin') {
+      const orderCheck = await pool.query(
+        `SELECT DISTINCT o.id FROM orders o
+         JOIN order_items oi ON o.id = oi.order_id
+         JOIN products p ON oi.product_id = p.id
+         WHERE o.id = $1 AND p.vendor_id = $2`,
+        [orderId, req.user.id]
+      );
+      if (orderCheck.rows.length === 0) {
+        return res.status(403).json({ success: false, message: "Unauthorized" });
+      }
+    }
+
+    // Get order details
+    const orderRes = await pool.query(`SELECT shiprocket_shipment_id, awb_code, shiprocket_order_id FROM orders WHERE id = $1`, [orderId]);
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const order = orderRes.rows[0];
+    const shipmentId = order.shiprocket_shipment_id;
+
+    if (!shipmentId) {
+      return res.status(400).json({
+        success: false,
+        message: "Order not pushed to Shiprocket yet. Please push the order to Shiprocket first."
+      });
+    }
+
+    if (order.awb_code) {
+      return res.status(400).json({
+        success: false,
+        message: "AWB already generated",
+        awb_code: order.awb_code
+      });
+    }
+
+    const token = await authenticateShiprocket();
+
+    // Method 1: Try to assign AWB directly
+    console.log("Attempting to assign AWB for shipment:", shipmentId);
+
+    const assignResponse = await fetch("https://apiv2.shiprocket.in/v1/external/courier/assign/awb", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        shipment_id: parseInt(shipmentId)
+      })
+    });
+
+    const responseText = await assignResponse.text();
+    console.log("Assign AWB raw response:", responseText);
+
+    let assignResult;
+    try {
+      assignResult = JSON.parse(responseText);
+    } catch (e) {
+      console.error("Failed to parse AWB response:", e.message);
+      return res.status(502).json({
+        success: false,
+        message: "Invalid response from Shiprocket API",
+        raw_response: responseText.substring(0, 200)
+      });
+    }
+
+    console.log("Assign AWB parsed response:", JSON.stringify(assignResult, null, 2));
+
+    let awbCode = null;
+
+    // Check different response structures for AWB code
+    if (assignResult.awb_assign_status === 1 || assignResult.awb_assign_status === true) {
+      awbCode = assignResult.awb_code ||
+        assignResult.data?.awb_code ||
+        assignResult.response?.data?.awb_code ||
+        assignResult.awb;
+    } else if (assignResult.status === 200 && assignResult.data) {
+      awbCode = assignResult.data.awb_code || assignResult.data.awb;
+    } else if (assignResult.success && assignResult.data) {
+      awbCode = assignResult.data.awb_code || assignResult.data.awb;
+    }
+
+    // If direct assignment failed or no AWB, try to fetch shipment details
+    if (!awbCode) {
+      console.log("Direct AWB assignment didn't return AWB, fetching shipment details...");
+
+      const shipmentResponse = await fetch(`https://apiv2.shiprocket.in/v1/external/shipments/${shipmentId}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        }
+      });
+
+      const shipmentText = await shipmentResponse.text();
+      let shipmentData;
+      try {
+        shipmentData = JSON.parse(shipmentText);
+      } catch (e) {
+        console.error("Failed to parse shipment response:", e.message);
+        shipmentData = {};
+      }
+
+      console.log("Shipment details response:", JSON.stringify(shipmentData, null, 2));
+
+      // Extract AWB from shipment data
+      if (shipmentData.data) {
+        awbCode = shipmentData.data.awb_code ||
+          shipmentData.data.awb ||
+          shipmentData.data.shipment?.awb_code ||
+          shipmentData.data.shipment?.awb;
+      }
+
+      if (!awbCode && shipmentData.awb_code) {
+        awbCode = shipmentData.awb_code;
+      }
+      if (!awbCode && shipmentData.awb) {
+        awbCode = shipmentData.awb;
+      }
+    }
+
+    // If still no AWB, try to get from order details
+    if (!awbCode && order.shiprocket_order_id) {
+      console.log("Checking order details for AWB...");
+
+      const orderResponse = await fetch(`https://apiv2.shiprocket.in/v1/external/orders/show/${order.shiprocket_order_id}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        }
+      });
+
+      const orderText = await orderResponse.text();
+      let orderData;
+      try {
+        orderData = JSON.parse(orderText);
+      } catch (e) {
+        console.error("Failed to parse order response:", e.message);
+        orderData = {};
+      }
+
+      console.log("Order details response:", JSON.stringify(orderData, null, 2));
+
+      if (orderData.data && orderData.data.shipments && orderData.data.shipments.length > 0) {
+        awbCode = orderData.data.shipments[0].awb_code ||
+          orderData.data.shipments[0].awb;
+      }
+      if (!awbCode && orderData.data && orderData.data.awb_code) {
+        awbCode = orderData.data.awb_code;
+      }
+      if (!awbCode && orderData.awb_code) {
+        awbCode = orderData.awb_code;
+      }
+    }
+
+    if (awbCode) {
+      // Update order with AWB code
+      await pool.query(
+        `UPDATE orders SET awb_code = $1, updated_at = NOW() WHERE id = $2`,
+        [awbCode, orderId]
+      );
+
+      return res.json({
+        success: true,
+        message: "AWB generated successfully!",
+        awb_code: awbCode
+      });
+    } else {
+      // Provide helpful error message with next steps
+      let errorMessage = "Could not find AWB for this order.";
+      let suggestion = "";
+
+      if (assignResult.message) {
+        errorMessage = assignResult.message;
+      }
+
+      // Check common issues
+      if (errorMessage.toLowerCase().includes("pickup")) {
+        suggestion = "Please ensure the pickup location is valid and active in Shiprocket.";
+      } else if (errorMessage.toLowerCase().includes("weight")) {
+        suggestion = "Please check product weights in your order items.";
+      } else if (errorMessage.toLowerCase().includes("address")) {
+        suggestion = "Please verify the delivery address has correct city, state, and pincode.";
+      } else {
+        suggestion = "The shipment may need to be processed by Shiprocket first. Please wait a few minutes and try again, or check the Shiprocket dashboard.";
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: `Shiprocket Sync: ${errorMessage}`,
+        suggestion: suggestion,
+        details: assignResult
+      });
+    }
+  } catch (error) {
+    console.error("AWB generation error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Server error generating AWB",
+      suggestion: "Please check Shiprocket credentials and try again."
+    });
+  }
+});
+
+app.post("/api/admin/orders/:id/label", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const orderRes = await pool.query(`SELECT shiprocket_shipment_id, awb_code FROM orders WHERE id = $1`, [orderId]);
+    const shipmentId = orderRes.rows[0]?.shiprocket_shipment_id;
+    const existingAwb = orderRes.rows[0]?.awb_code;
+    if (!shipmentId) {
+      return res.status(400).json({ success: false, message: "Order not pushed to Shiprocket yet. Please push the order first." });
+    }
+
+    const token = await authenticateShiprocket();
+    const shipmentIdValue = parseInt(shipmentId, 10);
+
+    const parseShiprocketJson = async (response) => {
+      const text = await response.text();
+      try {
+        return JSON.parse(text);
+      } catch (parseError) {
+        console.error("Failed to parse Shiprocket label response:", parseError.message);
+        return { parseError: parseError.message, rawText: text };
+      }
+    };
+
+    const generateLabel = async () => {
+      const response = await fetch("https://apiv2.shiprocket.in/v1/external/courier/generate/label", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ shipment_id: [shipmentIdValue] })
+      });
+
+      const result = await parseShiprocketJson(response);
+      console.log("Shiprocket generate label response:", JSON.stringify(result, null, 2));
+      return result;
+    };
+
+    const extractLabelUrl = (result) => {
+      return result.label_url || result.data?.label_url || (Array.isArray(result.data) && result.data[0]?.label_url) || (Array.isArray(result?.label_url) && result.label_url[0]);
+    };
+
+    const attachAwbToOrder = async (awbCode) => {
+      if (!awbCode || existingAwb) return;
+      await pool.query(`UPDATE orders SET awb_code = $1, updated_at = NOW() WHERE id = $2`, [awbCode, orderId]);
+      console.log(`✅ Persisted AWB ${awbCode} for order ${orderId}`);
+    };
+
+    let labelResult = await generateLabel();
+    let labelUrl = extractLabelUrl(labelResult);
+
+    if (!labelUrl && labelResult?.not_created && labelResult?.response && labelResult.response.toLowerCase().includes("no valid shipment ids")) {
+      console.log("Shiprocket label endpoint returned no valid shipment ids. Attempting AWB assignment before retrying label generation.");
+
+      const assignResponse = await fetch("https://apiv2.shiprocket.in/v1/external/courier/assign/awb", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ shipment_id: shipmentIdValue })
+      });
+
+      const assignResult = await parseShiprocketJson(assignResponse);
+      console.log("Shiprocket AWB assign response:", JSON.stringify(assignResult, null, 2));
+
+      const awbCode = assignResult.awb_code || assignResult.data?.awb_code || assignResult.data?.awb || assignResult.awb;
+      await attachAwbToOrder(awbCode);
+
+      // Retry label generation once after AWB assignment attempt
+      labelResult = await generateLabel();
+      labelUrl = extractLabelUrl(labelResult);
+    }
+
+    if (labelUrl) {
+      return res.json({ success: true, label_url: labelUrl, result: labelResult });
+    }
+
+    const errorMessage = labelResult.message || labelResult.response || labelResult.error || labelResult.errors || "Failed to fetch label from Shiprocket.";
+    const messageString = typeof errorMessage === 'string'
+      ? errorMessage
+      : Array.isArray(errorMessage)
+        ? errorMessage.join(", ")
+        : JSON.stringify(errorMessage);
+
+    let suggestion = "Please wait a few minutes and try again, or check the Shiprocket dashboard for the shipment status.";
+    if (labelResult?.not_created) {
+      suggestion = "The shipment may not be ready for label printing yet. Ensure the shipment is processed and AWB is assigned.";
+    }
+
+    return res.status(400).json({
+      success: false,
+      message: messageString || "Label is not available yet. Please wait for Shiprocket to process the shipment.",
+      suggestion,
+      details: labelResult
+    });
+  } catch (error) {
+    console.error("Shiprocket label generation error:", error);
+    res.status(500).json({ success: false, message: error.message || "Server error fetching label" });
+  }
+});
+
+app.post("/api/admin/orders/:id/invoice", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const orderRes = await pool.query(`SELECT shiprocket_order_id FROM orders WHERE id = $1`, [orderId]);
+    const srOrderId = orderRes.rows[0]?.shiprocket_order_id;
+    if (!srOrderId) return res.status(400).json({ success: false, message: "No Shiprocket Order ID found" });
+
+    const token = await authenticateShiprocket();
+    const fetchRes = await fetch("https://apiv2.shiprocket.in/v1/external/orders/print/invoice", {
+      method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify({ ids: [srOrderId] })
+    });
+    const result = await fetchRes.json();
+    if (result.is_invoice_created) return res.json({ success: true, invoice_url: result.invoice_url });
+    else return res.status(400).json({ success: false, message: "Failed to fetch invoice" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error fetching invoice" });
+  }
+});
+
+app.put("/api/admin/orders/:id/address", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { city, state, pincode, house_no, street_area, landmark, address } = req.body;
+
+    // Build the full address if components are provided
+    let fullAddress = address;
+    if (!fullAddress && (house_no || street_area || city || state || pincode)) {
+      const parts = [];
+      if (house_no) parts.push(house_no);
+      if (street_area) parts.push(street_area);
+      if (landmark) parts.push(landmark);
+      if (city) parts.push(city);
+      if (state) parts.push(state);
+      if (pincode) parts.push(pincode);
+      fullAddress = parts.join(', ');
+    }
+
+    const result = await pool.query(
+      `UPDATE orders 
+       SET city = COALESCE($1, city),
+           state = COALESCE($2, state),
+           pincode = COALESCE($3, pincode),
+           house_no = COALESCE($4, house_no),
+           street_area = COALESCE($5, street_area),
+           landmark = COALESCE($6, landmark),
+           address = COALESCE($7, address),
+           updated_at = NOW()
+       WHERE id = $8
+       RETURNING *`,
+      [city, state, pincode, house_no, street_area, landmark, fullAddress, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    res.json({ success: true, order: result.rows[0] });
+  } catch (error) {
+    console.error("Update order address error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Check AWB status without generating new one
+app.get("/api/admin/orders/:id/awb-status", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+
+    const orderRes = await pool.query(`SELECT shiprocket_shipment_id, awb_code FROM orders WHERE id = $1`, [orderId]);
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const order = orderRes.rows[0];
+
+    if (order.awb_code) {
+      return res.json({ success: true, has_awb: true, awb_code: order.awb_code });
+    }
+
+    if (!order.shiprocket_shipment_id) {
+      return res.json({ success: true, has_awb: false, message: "Order not pushed to Shiprocket yet" });
+    }
+
+    const token = await authenticateShiprocket();
+
+    const shipmentResponse = await fetch(`https://apiv2.shiprocket.in/v1/external/shipments/${order.shiprocket_shipment_id}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    const shipmentData = await shipmentResponse.json();
+
+    let awbCode = null;
+    if (shipmentData.data) {
+      awbCode = shipmentData.data.awb_code || shipmentData.data.awb;
+    }
+
+    if (awbCode) {
+      await pool.query(`UPDATE orders SET awb_code = $1 WHERE id = $2`, [awbCode, orderId]);
+      return res.json({ success: true, has_awb: true, awb_code: awbCode });
+    }
+
+    res.json({
+      success: true,
+      has_awb: false,
+      message: "AWB not yet assigned. The shipment may still be processing.",
+      shipment_status: shipmentData.data?.status || "Unknown"
+    });
+  } catch (error) {
+    console.error("AWB status check error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+
+app.delete("/api/admin/orders/:id", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const orderId = req.params.id;
+    const userRole = req.user.role?.toLowerCase();
+
+    await client.query("BEGIN");
+
+    // Check if order exists and verify permissions
+    let orderCheck;
+    if (userRole !== 'super_admin') {
+      orderCheck = await client.query(
+        `SELECT DISTINCT o.id, o.order_status FROM orders o
+         JOIN order_items oi ON o.id = oi.order_id
+         JOIN products p ON oi.product_id = p.id
+         WHERE o.id = $1 AND p.vendor_id = $2`,
+        [orderId, req.user.id]
+      );
+    } else {
+      orderCheck = await client.query(
+        "SELECT id, order_status FROM orders WHERE id = $1",
+        [orderId]
+      );
+    }
+
+    if (orderCheck.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Order not found or you don't have permission to delete it"
+      });
+    }
+
+    const order = orderCheck.rows[0];
+
+    // Check if order is already delivered - optionally restrict deletion
+    if (order.order_status === 'Delivered') {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete delivered orders. Please mark as returned or cancelled first."
+      });
+    }
+
+    // Handle wallet transactions first to avoid foreign key violation
+    await client.query(
+      `UPDATE wallet_transactions 
+       SET order_id = NULL, 
+           description = description || ' (Order #' || $1 || ' deleted)' 
+       WHERE order_id = $1`,
+      [orderId]
+    );
+
+    // Also delete pending wallet transactions
+    await client.query(
+      `DELETE FROM wallet_transactions 
+       WHERE order_id = $1 AND status = 'pending'`,
+      [orderId]
+    );
+
+    // Restore stock quantities for products in this order
+    const orderItems = await client.query(
+      "SELECT product_id, quantity FROM order_items WHERE order_id = $1",
+      [orderId]
+    );
+
+    for (const item of orderItems.rows) {
+      await client.query(
+        "UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2",
+        [item.quantity, item.product_id]
+      );
+    }
+
+    // Delete order items first (due to foreign key constraint)
+    await client.query("DELETE FROM order_items WHERE order_id = $1", [orderId]);
+
+    // Delete the order
+    await client.query("DELETE FROM orders WHERE id = $1", [orderId]);
+
+    // If there was a coupon used, decrement its usage count
+    if (order.coupon_id) {
+      await client.query(
+        "UPDATE coupons SET used_count = used_count - 1 WHERE id = $1 AND used_count > 0",
+        [order.coupon_id]
+      );
+    }
+
+    // If vendor earnings were added for this order, reverse them
+    if (order.order_status === 'Delivered') {
+      const vendorEarnings = await client.query(
+        "SELECT vendor_id, vendor_earning FROM order_items WHERE order_id = $1",
+        [orderId]
+      );
+
+      for (const earning of vendorEarnings.rows) {
+        if (earning.vendor_id && earning.vendor_earning > 0) {
+          await client.query(
+            "UPDATE users SET balance = balance - $1 WHERE id = $2",
+            [parseFloat(earning.vendor_earning), earning.vendor_id]
+          );
+        }
+      }
+    }
+
+    await client.query("COMMIT");
+
+    // Log the deletion
+    console.log(`✅ Order #${orderId} deleted by ${req.user.email || req.user.id} at ${new Date().toISOString()}`);
+
+    res.json({
+      success: true,
+      message: `Order #${orderId} deleted successfully. Stock has been restored.`
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Delete order error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to delete order"
+    });
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/admin/orders/bulk-delete", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { orderIds } = req.body;
+
+    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide an array of order IDs to delete"
+      });
+    }
+
+    await client.query("BEGIN");
+
+    let deletedCount = 0;
+    let failedCount = 0;
+    const failedOrders = [];
+
+    for (const orderId of orderIds) {
+      try {
+        // Check permissions
+        let orderCheck;
+        if (req.user.role?.toLowerCase() !== 'super_admin') {
+          orderCheck = await client.query(
+            `SELECT DISTINCT o.id, o.order_status FROM orders o
+             JOIN order_items oi ON o.id = oi.order_id
+             JOIN products p ON oi.product_id = p.id
+             WHERE o.id = $1 AND p.vendor_id = $2`,
+            [orderId, req.user.id]
+          );
+        } else {
+          orderCheck = await client.query(
+            "SELECT id, order_status FROM orders WHERE id = $1",
+            [orderId]
+          );
+        }
+
+        if (orderCheck.rows.length === 0) {
+          failedCount++;
+          failedOrders.push({ orderId, reason: "Not found or no permission" });
+          continue;
+        }
+
+        const order = orderCheck.rows[0];
+
+        if (order.order_status === 'Delivered') {
+          failedCount++;
+          failedOrders.push({ orderId, reason: "Cannot delete delivered orders" });
+          continue;
+        }
+
+        // Handle wallet transactions
+        await client.query(
+          `UPDATE wallet_transactions 
+           SET order_id = NULL, 
+               description = description || ' (Order #' || $1 || ' deleted)' 
+           WHERE order_id = $1`,
+          [orderId]
+        );
+
+        await client.query(
+          `DELETE FROM wallet_transactions 
+           WHERE order_id = $1 AND status = 'pending'`,
+          [orderId]
+        );
+
+        // Restore stock
+        const orderItems = await client.query(
+          "SELECT product_id, quantity FROM order_items WHERE order_id = $1",
+          [orderId]
+        );
+
+        for (const item of orderItems.rows) {
+          await client.query(
+            "UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2",
+            [item.quantity, item.product_id]
+          );
+        }
+
+        // Delete order items and order
+        await client.query("DELETE FROM order_items WHERE order_id = $1", [orderId]);
+        await client.query("DELETE FROM orders WHERE id = $1", [orderId]);
+
+        // Update coupon usage if applicable
+        if (order.coupon_id) {
+          await client.query(
+            "UPDATE coupons SET used_count = used_count - 1 WHERE id = $1 AND used_count > 0",
+            [order.coupon_id]
+          );
+        }
+
+        deletedCount++;
+      } catch (err) {
+        failedCount++;
+        failedOrders.push({ orderId, reason: err.message });
+      }
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      success: true,
+      message: `${deletedCount} order(s) deleted successfully. ${failedCount} failed.`,
+      deletedCount,
+      failedCount,
+      failedOrders: failedOrders.length > 0 ? failedOrders : undefined
+    });
+
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Bulk delete error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to delete orders"
+    });
+  } finally {
+    client.release();
+  }
+});
+// ================= SHIPROCKET WEBHOOK (SECURE VERSION) =================
+
+
+app.get("/api/shiprocket/pincode/:pincode", async (req, res) => {
+  try {
+    const deliveryPincode = req.params.pincode;
+    if (!/^[1-9][0-9]{5}$/.test(deliveryPincode)) return res.status(400).json({ success: false, message: "Invalid pincode format" });
+
+    const token = await authenticateShiprocket();
+    const config = await getShiprocketConfig();
+    const pickupPincode = config.shiprocket_pickup_pincode || "581322";
+    const weight = req.query.weight || 0.5;
+
+    const url = `https://apiv2.shiprocket.in/v1/external/courier/serviceability?pickup_postcode=${pickupPincode}&delivery_postcode=${deliveryPincode}&weight=${weight}&cod=0`;
+
+    const fetchRes = await fetch(url, { method: "GET", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` } });
+    const result = await fetchRes.json();
+
+    if (result.status === 200 && result.data && result.data.available_courier_companies.length > 0) {
+      const fastest = result.data.available_courier_companies.reduce((prev, current) => { return (prev.etd_hours < current.etd_hours) ? prev : current; });
+      return res.json({ success: true, serviceable: true, estimated_days: Math.ceil(fastest.etd_hours / 24) || 5, courier: fastest.courier_name });
+    } else {
+      return res.json({ success: true, serviceable: false, message: "Delivery not available to this pincode." });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Could not fetch serviceability details" });
+  }
+});
+
+// ================= SHIPROCKET ENHANCED INTEGRATION =================
+
+// Add this near your existing authenticateShiprocket function (around line 2900+)
+
+// Get live shipping rates for checkout
+app.get("/api/shiprocket/shipping-rates", async (req, res) => {
+  try {
+    const { pickup_pincode, delivery_pincode, weight, cod } = req.query;
+
+    if (!delivery_pincode || !/^[1-9][0-9]{5}$/.test(delivery_pincode)) {
+      return res.status(400).json({ success: false, message: "Invalid delivery pincode" });
+    }
+
+    const token = await authenticateShiprocket();
+    const codParam = cod === 'true' ? 1 : 0;
+
+    // Use vendor's pickup pincode or fallback to default
+    let pickupPostcode = pickup_pincode || process.env.SHIPROCKET_PICKUP_PINCODE || "581322";
+
+    const url = `https://apiv2.shiprocket.in/v1/external/courier/serviceability?pickup_postcode=${pickupPostcode}&delivery_postcode=${delivery_pincode}&weight=${weight || 0.5}&cod=${codParam}`;
+
+    const fetchRes = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    const result = await fetchRes.json();
+
+    if (result.status === 200 && result.data?.available_courier_companies?.length > 0) {
+      const rates = result.data.available_courier_companies.map(courier => ({
+        courier_id: courier.courier_id,
+        courier_name: courier.courier_name,
+        rate: parseFloat(courier.rate),
+        estimated_days: Math.ceil(courier.etd_hours / 24),
+        estimated_delivery: `${Math.ceil(courier.etd_hours / 24)}-${Math.ceil(courier.etd_hours / 24) + 2} days`,
+        serviceability: true
+      }));
+
+      // Sort by rate (cheapest first)
+      rates.sort((a, b) => a.rate - b.rate);
+
+      return res.json({
+        success: true,
+        serviceable: true,
+        rates: rates,
+        recommended: rates[0]
+      });
+    } else {
+      return res.json({
+        success: true,
+        serviceable: false,
+        message: "No courier service available for this pincode",
+        rates: []
+      });
+    }
+  } catch (error) {
+    console.error("Shipping rates error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch shipping rates"
+    });
+  }
+});
+
+// Get courier recommendation for COD vs Prepaid
+app.get("/api/shiprocket/courier-recommendation", async (req, res) => {
+  try {
+    const { delivery_pincode, amount, is_cod, weight } = req.query;
+
+    if (!delivery_pincode) {
+      return res.status(400).json({ success: false, message: "Delivery pincode is required" });
+    }
+
+    if (!/^[1-9][0-9]{5}$/.test(delivery_pincode)) {
+      return res.status(400).json({ success: false, message: "Invalid pincode format" });
+    }
+
+    let token;
+    try {
+      token = await authenticateShiprocket();
+    } catch (authError) {
+      return res.status(401).json({
+        success: false,
+        message: "Shipping service not configured. Please add Shiprocket credentials in Settings."
+      });
+    }
+
+    const config = await getShiprocketConfig();
+    const pickupPostcode = config.shiprocket_pickup_pincode || "581322";
+    const codParam = is_cod === 'true' ? 1 : 0;
+    const weightParam = parseFloat(weight) || 0.5;
+
+    const url = `https://apiv2.shiprocket.in/v1/external/courier/serviceability?pickup_postcode=${pickupPostcode}&delivery_postcode=${delivery_pincode}&weight=${weightParam}&cod=${codParam}`;
+
+    const fetchRes = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    const result = await fetchRes.json();
+
+    if (fetchRes.status !== 200) {
+      return res.status(400).json({
+        success: false,
+        serviceable: false,
+        message: result.message || "Failed to fetch courier rates"
+      });
+    }
+
+    if (result.status === 200 && result.data?.available_courier_companies?.length > 0) {
+      let couriers = result.data.available_courier_companies;
+
+      if (is_cod === 'true') {
+        couriers = couriers.filter(c => c.cod_available === true);
+      }
+
+      if (couriers.length === 0) {
+        return res.json({
+          success: true,
+          serviceable: false,
+          message: "No courier available for COD on this pincode"
+        });
+      }
+
+      const cheapest = [...couriers].sort((a, b) => parseFloat(a.rate) - parseFloat(b.rate))[0];
+      const fastest = [...couriers].sort((a, b) => a.etd_hours - b.etd_hours)[0];
+
+      return res.json({
+        success: true,
+        serviceable: true,
+        recommended_courier: {
+          courier_id: cheapest.courier_id,
+          courier_name: cheapest.courier_name,
+          rate: parseFloat(cheapest.rate),
+          etd_hours: cheapest.etd_hours,
+          estimated_days: Math.ceil(cheapest.etd_hours / 24)
+        },
+        fastest_courier: {
+          courier_id: fastest.courier_id,
+          courier_name: fastest.courier_name,
+          rate: parseFloat(fastest.rate),
+          etd_hours: fastest.etd_hours,
+          estimated_days: Math.ceil(fastest.etd_hours / 24)
+        },
+        all_couriers: couriers.map(c => ({
+          courier_id: c.courier_id,
+          courier_name: c.courier_name,
+          rate: parseFloat(c.rate),
+          etd_hours: c.etd_hours,
+          cod_available: c.cod_available
+        }))
+      });
+    } else {
+      return res.json({
+        success: true,
+        serviceable: false,
+        message: result.message || "No courier available for this pincode"
+      });
+    }
+  } catch (error) {
+    console.error("Courier recommendation error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Internal server error"
+    });
+  }
+});
+// Track shipment by AWB number
+// Track shipment by AWB number (Optimized Shiprocket API integration)
+app.get("/api/shiprocket/track/:awb", async (req, res) => {
+  try {
+    const { awb } = req.params;
+    const token = await authenticateShiprocket(); // Obtains active Shiprocket session token
+
+    console.log(`📡 Fetching live tracking updates for AWB: ${awb}`);
+
+    // Call official Shiprocket direct tracking API by AWB code
+    const fetchRes = await fetch(`https://apiv2.shiprocket.in/v1/external/courier/track/awb/${awb}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    const result = await fetchRes.json();
+
+    if (result && result.tracking_data && result.tracking_data.track_status === 1) {
+      const track = result.tracking_data.shipment_track?.[0] || {};
+      const activities = result.tracking_data.shipment_track_activities || [];
+
+      // Structure clean unified JSON for the React client application
+      return res.json({
+        success: true,
+        tracking: {
+          courier_name: track.courier_name || "Shiprocket Partner",
+          awb_code: track.awb_code || awb,
+          current_status: track.current_status || "In Transit",
+          edd: track.edd || null,
+          activities: activities.map(act => ({
+            date: act.date,
+            activity: act.activity,
+            location: act.location,
+            status: act.status
+          }))
+        }
+      });
+    } else {
+      return res.json({
+        success: false,
+        message: result?.tracking_data?.error || "Tracking details are still processing with the courier. Please check again shortly."
+      });
+    }
+  } catch (error) {
+    console.error("❌ Live Tracking API error:", error.message);
+    res.status(500).json({ success: false, message: "Could not retrieve live updates from the courier network." });
+  }
+});
+
+// Get all orders from Shiprocket (for admin)
+app.get("/api/shiprocket/orders", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const token = await authenticateShiprocket();
+    const { page = 1, per_page = 20 } = req.query;
+
+    const fetchRes = await fetch(`https://apiv2.shiprocket.in/v1/external/orders?page=${page}&per_page=${per_page}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    const result = await fetchRes.json();
+
+    res.json({
+      success: true,
+      orders: result.data || []
+    });
+  } catch (error) {
+    console.error("Fetch Shiprocket orders error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Cancel order in Shiprocket
+app.post("/api/shiprocket/cancel-order/:orderId", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const token = await authenticateShiprocket();
+
+    const fetchRes = await fetch(`https://apiv2.shiprocket.in/v1/external/orders/cancel`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ ids: [orderId] })
+    });
+
+    const result = await fetchRes.json();
+
+    if (result.status === 200) {
+      // Update local database
+      await pool.query(
+        `UPDATE orders SET order_status = 'Cancelled', updated_at = NOW() WHERE shiprocket_order_id = $1`,
+        [orderId]
+      );
+
+      res.json({ success: true, message: "Order cancelled successfully", data: result });
+    } else {
+      res.status(400).json({ success: false, message: result.message || "Failed to cancel order" });
+    }
+  } catch (error) {
+    console.error("Cancel order error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Generate manifest for multiple shipments
+app.post("/api/shiprocket/generate-manifest", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const { shipment_ids } = req.body;
+    const token = await authenticateShiprocket();
+
+    const fetchRes = await fetch(`https://apiv2.shiprocket.in/v1/external/manifests/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ shipment_ids: shipment_ids })
+    });
+
+    const result = await fetchRes.json();
+
+    res.json({
+      success: result.status === 200,
+      data: result
+    });
+  } catch (error) {
+    console.error("Generate manifest error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+
+app.get("/api/admin/admins", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, name, email, phone, role, status, created_at, store_name
+      FROM users
+      WHERE role = 'admin'
+      ORDER BY created_at DESC
+    `);
+    res.json({ success: true, users: result.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch admins" });
+  }
+});
+
+app.get("/api/admin/customers", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT u.id, u.name, u.email, u.phone, u.role, u.status, u.created_at,
+             COALESCE(orders.total_orders, 0)::int AS total_orders,
+             COALESCE(orders.total_purchase, 0)::float AS total_purchase
+      FROM users u
+      LEFT JOIN (
+        SELECT user_id, COUNT(*) AS total_orders, SUM(total_amount) AS total_purchase
+        FROM orders
+        GROUP BY user_id
+      ) orders ON u.id = orders.user_id
+      WHERE u.role = 'user'
+      ORDER BY u.created_at DESC
+    `);
+    res.json({ success: true, users: result.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch customers" });
+  }
+});
+
+app.delete("/api/admin/admins/:id", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    if (parseInt(userId) === req.user.id) {
+      return res.status(400).json({ message: "You cannot delete your own account" });
+    }
+
+    const userCheck = await pool.query("SELECT role FROM users WHERE id = $1", [userId]);
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const role = userCheck.rows[0].role;
+    if (role !== 'admin' && role !== 'vendor') {
+      return res.status(400).json({ message: "Only admin or vendor accounts can be deleted via this endpoint" });
+    }
+
+    await pool.query("DELETE FROM users WHERE id = $1", [userId]);
+    res.json({ success: true, message: `${role} deleted successfully` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Delete failed" });
+  }
+});
+
+app.get("/api/products/search", async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim().length < 2) return res.json({ success: true, products: [] });
+    const searchTerm = `%${q.trim()}%`;
+    const result = await pool.query(
+      `SELECT p.id, p.uuid, p.name, p.product_code, p.main_image_url, p.price, p.old_price FROM products p JOIN users u ON p.vendor_id = u.id WHERE p.is_active = true AND u.store_active = true AND (p.name ILIKE $1 OR p.product_code ILIKE $1) ORDER BY CASE WHEN p.product_code ILIKE $2 THEN 1 WHEN p.name ILIKE $2 THEN 2 ELSE 3 END, p.name ASC LIMIT 10`,
+      [searchTerm, `${q.trim()}%`]
+    );
+    res.json({ success: true, products: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Search failed" });
+  }
+});
+
+// ================= SETTINGS ROUTES =================
+app.get("/api/settings", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM settings");
+    const settings = {};
+    result.rows.forEach(row => { settings[row.key] = row.value; });
+    res.json({ success: true, settings });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put("/api/settings", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { settings } = req.body;
+    for (const key in settings) {
+      await pool.query(
+        "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = CURRENT_TIMESTAMP",
+        [key, settings[key].toString()]
+      );
+    }
+
+    // Re-initialize Razorpay if keys were updated
+    await initRazorpay();
+
+    res.json({ success: true, message: "Settings updated successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/settings/platform-fee", async (req, res) => {
+  try {
+    res.json({ success: true, platform_fee_percent: 0.00 });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.put("/api/admin/settings/platform-fee", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { platform_fee_percent } = req.body;
+    if (platform_fee_percent === undefined || isNaN(platform_fee_percent) || platform_fee_percent < 0 || platform_fee_percent > 100) {
+      return res.status(400).json({ success: false, message: "Invalid fee percentage (0-100)" });
+    }
+    await pool.query(
+      "UPDATE settings SET value = $1, updated_at = NOW() WHERE key = 'platform_fee_percent'",
+      [platform_fee_percent.toString()]
+    );
+    res.json({ success: true, message: "Platform fee updated successfully" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
+
+// ================= INVOICES ROUTES WITH PROPER PDF =================
+
+app.get("/api/admin/invoices", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const userRole = req.user.role?.toLowerCase();
+    const vendorId = req.user.id;
+
+    let query = `
+      SELECT 
+        p.id,
+        p.vendor_id,
+        p.amount,
+        p.status,
+        p.requested_at as created_at,
+        p.processed_at,
+        u.store_name,
+        u.name as vendor_name,
+        u.email,
+        u.phone,
+        u.address,
+        u.gst_number
+      FROM payouts p
+      JOIN users u ON p.vendor_id = u.id
+      WHERE p.status = 'Paid'
+    `;
+
+    let params = [];
+    if (userRole !== 'super_admin') {
+      query += ` AND p.vendor_id = $1`;
+      params.push(vendorId);
+    }
+
+    query += ` ORDER BY p.processed_at DESC`;
+
+    const result = await pool.query(query, params);
+
+    const invoices = result.rows.map(row => ({
+      id: row.id,
+      vendor_id: row.vendor_id,
+      store_name: row.store_name,
+      vendor_name: row.vendor_name,
+      email: row.email,
+      phone: row.phone,
+      address: row.address,
+      gst_number: row.gst_number,
+      amount: parseFloat(row.amount),
+      status: row.status,
+      created_at: row.created_at,
+      processed_at: row.processed_at,
+      description: `Settlement for payout request #${row.id}`
+    }));
+
+    res.json({ success: true, invoices });
+  } catch (err) {
+    console.error("Invoices fetch error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
+// ================= SETTLEMENT REPORT DOWNLOAD (CSV/Excel) =================
+app.get("/api/admin/payouts/report/download", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const userRole = req.user.role?.toLowerCase();
+    const vendorId = req.user.id;
+    const { vendor_id, from, to, format = 'csv' } = req.query;
+
+    let query = `
+      SELECT p.*, u.name as vendor_name, u.email as vendor_email, u.store_name, u.phone
+      FROM payouts p
+      JOIN users u ON p.vendor_id = u.id
+      WHERE 1=1
+    `;
+
+    let params = [];
+    let paramCounter = 1;
+
+    if (userRole !== 'super_admin') {
+      query += ` AND p.vendor_id = $${paramCounter++}`;
+      params.push(vendorId);
+    } else if (vendor_id) {
+      query += ` AND p.vendor_id = $${paramCounter++}`;
+      params.push(vendor_id);
+    }
+
+    if (from) {
+      query += ` AND p.requested_at >= $${paramCounter++}`;
+      params.push(from);
+    }
+
+    if (to) {
+      query += ` AND p.requested_at <= $${paramCounter++}`;
+      params.push(to + ' 23:59:59');
+    }
+
+    query += ` ORDER BY p.requested_at DESC`;
+
+    const result = await pool.query(query, params);
+
+    // Calculate summary
+    const totalAmount = result.rows.reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const totalPending = result.rows.filter(p => p.status === 'Pending').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const totalPaid = result.rows.filter(p => p.status === 'Paid').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+
+    // Generate CSV
+    const headers = [
+      'Settlement ID',
+      'Vendor Name',
+      'Store Name',
+      'Email',
+      'Phone',
+      'Amount (₹)',
+      'Status',
+      'Bank Details',
+      'Requested Date',
+      'Processed Date'
+    ];
+
+    const rows = result.rows.map(p => [
+      `STL-${String(p.id).padStart(6, '0')}`,
+      p.vendor_name,
+      p.store_name || '-',
+      p.vendor_email,
+      p.phone || '-',
+      parseFloat(p.amount).toFixed(2),
+      p.status,
+      p.bank_details?.replace(/,/g, ';')?.replace(/\n/g, ' ') || '-',
+      new Date(p.requested_at).toLocaleString('en-IN'),
+      p.processed_at ? new Date(p.processed_at).toLocaleString('en-IN') : '-'
+    ]);
+
+    // Add summary rows
+    const summaryRows = [
+      [],
+      ['REPORT SUMMARY', '', '', '', '', '', '', '', '', ''],
+      ['Total Settlements', result.rows.length.toString(), '', '', '', totalAmount.toFixed(2), '', '', '', ''],
+      ['Total Pending', result.rows.filter(p => p.status === 'Pending').length.toString(), '', '', '', totalPending.toFixed(2), '', '', '', ''],
+      ['Total Paid', result.rows.filter(p => p.status === 'Paid').length.toString(), '', '', '', totalPaid.toFixed(2), '', '', '', ''],
+      [],
+      [`Generated On: ${new Date().toLocaleString()}`, '', '', '', '', '', '', '', '', ''],
+      [`Report Period: ${from || 'Start'} to ${to || 'End'}`, '', '', '', '', '', '', '', '', '']
+    ];
+
+    const allRows = [headers, ...rows, ...summaryRows];
+    const csvContent = allRows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+
+    const filename = `settlement_report_${new Date().toISOString().split('T')[0]}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.send('\uFEFF' + csvContent); // Add BOM for UTF-8 encoding
+
+  } catch (err) {
+    console.error("Report download error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ================= MONTHLY STATEMENT DOWNLOAD =================
+app.get("/api/admin/payouts/monthly-statement/download", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    const userRole = req.user.role?.toLowerCase();
+    const vendorId = req.user.id;
+
+    let query = `
+      SELECT p.*, u.name as vendor_name, u.email as vendor_email, u.store_name, u.phone, u.address
+      FROM payouts p
+      JOIN users u ON p.vendor_id = u.id
+      WHERE EXTRACT(MONTH FROM p.requested_at) = $1 
+      AND EXTRACT(YEAR FROM p.requested_at) = $2
+    `;
+
+    let params = [month, year];
+
+    if (userRole !== 'super_admin') {
+      query += ` AND p.vendor_id = $3`;
+      params.push(vendorId);
+    }
+
+    query += ` ORDER BY p.requested_at DESC`;
+
+    const result = await pool.query(query, params);
+    const payouts = result.rows;
+
+    // Parse amounts to numbers
+    const totalAmount = payouts.reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const completedAmount = payouts.filter(p => p.status === 'Paid').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+    const pendingAmount = payouts.filter(p => p.status === 'Pending').reduce((sum, p) => sum + parseFloat(p.amount), 0);
+
+    // Create PDF
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=statement_${month}_${year}.pdf`);
+
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(24)
+      .font('Helvetica-Bold')
+      .fillColor('#8E2139')
+      .text('JAYASTRA STORE', { align: 'center' });
+
+    doc.fontSize(16)
+      .fillColor('#333333')
+      .text('Monthly Account Statement', { align: 'center' });
+
+    doc.fontSize(12)
+      .fillColor('#666666')
+      .text(`${month} ${year}`, { align: 'center' });
+
+    doc.moveDown(1);
+
+    doc.strokeColor('#E0E0E0')
+      .lineWidth(1)
+      .moveTo(50, doc.y)
+      .lineTo(550, doc.y)
+      .stroke();
+
+    doc.moveDown(1);
+
+    // Vendor Info
+    const vendor = payouts[0] || {};
+    doc.fontSize(10)
+      .font('Helvetica-Bold')
+      .fillColor('#333333')
+      .text('Account Holder Details:', 50, doc.y);
+
+    doc.font('Helvetica')
+      .text(`Name: ${vendor.store_name || vendor.vendor_name || 'N/A'}`, 50, doc.y + 5)
+      .text(`Email: ${vendor.vendor_email || 'N/A'}`, 50, doc.y + 20)
+      .text(`Phone: ${vendor.phone || 'N/A'}`, 300, doc.y + 5);
+
+    if (vendor.address) {
+      doc.text(`Address: ${vendor.address.substring(0, 80)}`, 50, doc.y + 35);
+    }
+
+    doc.moveDown(4);
+
+    // Summary Cards
+    const summaryY = doc.y;
+    doc.rect(50, summaryY, 150, 70).fillAndStroke('#F0FDF4', '#86EFAC');
+    doc.rect(210, summaryY, 150, 70).fillAndStroke('#FEF3C7', '#FDE68A');
+    doc.rect(370, summaryY, 150, 70).fillAndStroke('#EFF6FF', '#BFDBFE');
+
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#166534');
+    doc.text('Total Transactions', 70, summaryY + 15);
+    doc.fontSize(18).text(payouts.length.toString(), 70, summaryY + 35);
+
+    doc.fillColor('#92400E');
+    doc.text('Total Amount', 230, summaryY + 15);
+    doc.fontSize(18).text(`₹${totalAmount.toFixed(2)}`, 230, summaryY + 35);
+
+    doc.fillColor('#1E40AF');
+    doc.text('Settled Amount', 390, summaryY + 15);
+    doc.fontSize(18).text(`₹${completedAmount.toFixed(2)}`, 390, summaryY + 35);
+
+    doc.moveDown(7);
+
+    // Transactions Table
+    const tableTop = doc.y;
+    doc.rect(50, tableTop, 500, 25).fillAndStroke('#8E2139', '#8E2139');
+
+    doc.fillColor('#FFFFFF')
+      .fontSize(9)
+      .font('Helvetica-Bold')
+      .text('Date', 60, tableTop + 7)
+      .text('Transaction ID', 150, tableTop + 7)
+      .text('Amount (₹)', 350, tableTop + 7)
+      .text('Status', 430, tableTop + 7);
+
+    let currentY = tableTop + 25;
+    payouts.forEach((p, index) => {
+      if (currentY > 700) {
+        doc.addPage();
+        currentY = 50;
+      }
+
+      doc.fillColor('#333333')
+        .fontSize(9)
+        .font('Helvetica')
+        .text(new Date(p.requested_at).toLocaleDateString(), 60, currentY + 5)
+        .text(`PYT-${String(p.id).padStart(6, '0')}`, 150, currentY + 5)
+        .text(parseFloat(p.amount).toFixed(2), 350, currentY + 5)
+        .text(p.status, 430, currentY + 5);
+
+      doc.rect(50, currentY, 500, 20).stroke();
+      currentY += 20;
+    });
+
+    // Footer
+    doc.moveDown(2);
+    const footerY = doc.y;
+    doc.fontSize(8)
+      .fillColor('#9CA3AF')
+      .text('This is a computer generated statement. For queries, contact accounts@jayastra.com', 50, footerY, { align: 'center' })
+      .text(`Generated on: ${new Date().toLocaleString()}`, 50, footerY + 15, { align: 'center' });
+
+    doc.end();
+
+  } catch (err) {
+    console.error("Monthly statement error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
+
+// ================= SAVED BANK ACCOUNTS ROUTES =================
+
+// Get saved bank accounts for vendor
+app.get("/api/admin/payouts/saved-accounts", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const vendorId = req.user.id;
+
+    // First, check if the table exists, if not create it
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS vendor_bank_accounts (
+        id SERIAL PRIMARY KEY,
+        vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        bank_details TEXT NOT NULL,
+        is_default BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    const result = await pool.query(
+      `SELECT * FROM vendor_bank_accounts WHERE vendor_id = $1 ORDER BY is_default DESC, created_at DESC`,
+      [vendorId]
+    );
+
+    res.json({ success: true, accounts: result.rows });
+  } catch (err) {
+    console.error("Error fetching saved accounts:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Save bank account for vendor
+app.post("/api/admin/payouts/save-account", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const vendorId = req.user.id;
+    const { bank_details } = req.body;
+
+    if (!bank_details || bank_details.trim() === "") {
+      return res.status(400).json({ success: false, message: "Bank details are required" });
+    }
+
+    // Create table if not exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS vendor_bank_accounts (
+        id SERIAL PRIMARY KEY,
+        vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        bank_details TEXT NOT NULL,
+        is_default BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Check if this exact bank detail already exists for this vendor
+    const existing = await pool.query(
+      `SELECT id FROM vendor_bank_accounts WHERE vendor_id = $1 AND bank_details = $2`,
+      [vendorId, bank_details]
+    );
+
+    if (existing.rows.length === 0) {
+      // Check if this is the first account - make it default
+      const countResult = await pool.query(
+        `SELECT COUNT(*) FROM vendor_bank_accounts WHERE vendor_id = $1`,
+        [vendorId]
+      );
+      const isFirstAccount = parseInt(countResult.rows[0].count) === 0;
+
+      await pool.query(
+        `INSERT INTO vendor_bank_accounts (vendor_id, bank_details, is_default) VALUES ($1, $2, $3)`,
+        [vendorId, bank_details, isFirstAccount]
+      );
+    }
+
+    res.json({ success: true, message: "Bank account saved successfully" });
+  } catch (err) {
+    console.error("Error saving bank account:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Delete saved bank account
+app.delete("/api/admin/payouts/saved-account/:id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const vendorId = req.user.id;
+    const accountId = req.params.id;
+
+    const result = await pool.query(
+      `DELETE FROM vendor_bank_accounts WHERE id = $1 AND vendor_id = $2 RETURNING *`,
+      [accountId, vendorId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Account not found" });
+    }
+
+    res.json({ success: true, message: "Bank account deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting bank account:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Set default bank account
+app.put("/api/admin/payouts/saved-account/:id/default", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const vendorId = req.user.id;
+    const accountId = req.params.id;
+
+    await client.query("BEGIN");
+
+    // Remove default from all accounts
+    await client.query(
+      `UPDATE vendor_bank_accounts SET is_default = false WHERE vendor_id = $1`,
+      [vendorId]
+    );
+
+    // Set new default
+    await client.query(
+      `UPDATE vendor_bank_accounts SET is_default = true WHERE id = $1 AND vendor_id = $2`,
+      [accountId, vendorId]
+    );
+
+    await client.query("COMMIT");
+    res.json({ success: true, message: "Default account updated successfully" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Error setting default account:", err);
+    res.status(500).json({ success: false, message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ================= CANCEL & REJECT PAYOUT ROUTES =================
+
+// Cancel payout request (Vendor/Admin) - FIXED - Refund to balance
+app.put("/api/admin/payouts/:id/cancel", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const payoutId = req.params.id;
+    const vendorId = req.user.id;
+    const { reason } = req.body;
+
+    await client.query("BEGIN");
+
+    const payoutCheck = await client.query(
+      "SELECT * FROM payouts WHERE id = $1 AND vendor_id = $2 AND status = 'Pending'",
+      [payoutId, vendorId]
+    );
+
+    if (payoutCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Payout request not found or already processed" });
+    }
+
+    const payout = payoutCheck.rows[0];
+
+    await client.query(
+      "UPDATE users SET balance = balance + $1 WHERE id = $2",
+      [parseFloat(payout.amount), vendorId]
+    );
+
+    await client.query(
+      "UPDATE payouts SET status = 'Cancelled', cancellation_reason = $1, updated_at = NOW() WHERE id = $2",
+      [reason || "Cancelled by vendor", payoutId]
+    );
+
+    // Update wallet transaction status
+    await client.query(
+      `UPDATE wallet_transactions SET status = 'cancelled', description = description || ' - Cancelled' WHERE payout_id = $1`,
+      [payoutId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({ success: true, message: "Payout request cancelled and amount refunded" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Cancel payout error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+
+// Reject payout request (Super Admin only) - FIXED - Refund to balance
+app.put("/api/admin/payouts/:id/reject", verifyToken, verifySuperAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const payoutId = req.params.id;
+    const { reason } = req.body;
+
+    await client.query("BEGIN");
+
+    // Check if payout exists and is pending
+    const payoutCheck = await client.query(
+      "SELECT * FROM payouts WHERE id = $1 AND status = 'Pending'",
+      [payoutId]
+    );
+
+    if (payoutCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Payout request not found or already processed" });
+    }
+
+    const payout = payoutCheck.rows[0];
+
+    // REFUND the amount back to vendor's balance
+    await client.query(
+      "UPDATE users SET balance = balance + $1 WHERE id = $2",
+      [parseFloat(payout.amount), payout.vendor_id]
+    );
+
+    // Update payout status
+    await client.query(
+      "UPDATE payouts SET status = 'Rejected', rejection_reason = $1, updated_at = NOW(), processed_at = NOW() WHERE id = $2",
+      [reason || "Rejected by admin", payoutId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({ success: true, message: "Payout request rejected and amount refunded" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Reject payout error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/admin/wallet-transactions", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const userRole = req.user.role?.toLowerCase();
+    let query = `
+      SELECT wt.*, 
+             u.store_name, 
+             u.name as vendor_name
+      FROM wallet_transactions wt
+      JOIN users u ON wt.vendor_id = u.id
+      WHERE 1=1
+    `;
+    let params = [];
+
+    if (userRole !== 'super_admin') {
+      query += ` AND wt.vendor_id = $1`;
+      params.push(req.user.id);
+    }
+
+    query += ` ORDER BY wt.created_at DESC`;
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, transactions: result.rows });
+  } catch (err) {
+    console.error("Wallet transactions error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ================= NAVBAR CATEGORY MANAGEMENT =================
+
+// Get categories for navbar (with ordering)
+app.get("/api/navbar/categories", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, slug, image_url, display_order, nav_order 
+       FROM categories 
+       WHERE is_active = true AND show_in_navbar = true 
+       ORDER BY nav_order ASC, display_order ASC, created_at ASC`
+    );
+    res.json({ success: true, categories: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to fetch navbar categories" });
+  }
+});
+
+// Admin: Get all categories for navbar management
+// Admin: Get all categories for navbar management
+app.get("/api/admin/navbar/categories", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, slug, is_active, show_in_navbar, nav_order, display_order
+       FROM categories 
+       ORDER BY nav_order ASC, display_order ASC, created_at DESC`
+    );
+    res.json({ success: true, categories: result.rows });
+  } catch (error) {
+    console.error("Error fetching navbar categories:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch categories" });
+  }
+});
+
+// Update navbar visibility for a category
+app.put("/api/admin/navbar/categories/:id/visibility", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { show_in_navbar } = req.body;
+
+    const result = await pool.query(
+      `UPDATE categories SET show_in_navbar = $1, updated_at = NOW() 
+       WHERE id = $2 RETURNING *`,
+      [show_in_navbar, id]
+    );
+
+    res.json({ success: true, category: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to update visibility" });
+  }
+});
+
+// Update navbar order for all categories (bulk update)
+app.put("/api/admin/navbar/categories/reorder", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { categories } = req.body; // [{ id: 1, nav_order: 0 }, { id: 2, nav_order: 1 }]
+
+    await client.query("BEGIN");
+
+    for (const cat of categories) {
+      await client.query(
+        `UPDATE categories SET nav_order = $1, updated_at = NOW() WHERE id = $2`,
+        [cat.nav_order, cat.id]
+      );
+    }
+
+    await client.query("COMMIT");
+    res.json({ success: true, message: "Navbar order updated successfully" });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ success: false, message: "Failed to update order" });
+  } finally {
+    client.release();
+  }
+});
+
+// Toggle multiple categories navbar visibility
+app.post("/api/admin/navbar/categories/bulk-visibility", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { categoryIds, show_in_navbar } = req.body;
+
+    await client.query("BEGIN");
+
+    for (const id of categoryIds) {
+      await client.query(
+        `UPDATE categories SET show_in_navbar = $1, updated_at = NOW() WHERE id = $2`,
+        [show_in_navbar, id]
+      );
+    }
+
+    await client.query("COMMIT");
+    res.json({ success: true, message: "Bulk visibility updated successfully" });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ success: false, message: "Failed to update visibility" });
+  } finally {
+    client.release();
+  }
+});
+
+// ================= PIN AUTHENTICATION ROUTES =================
+
+// Create or update user PIN (after login)
+app.post("/api/auth/create-pin", verifyToken, async (req, res) => {
+  try {
+    const { pin } = req.body;
+    const userId = req.user.id;
+
+    // Validate PIN: exactly 4 digits
+    if (!pin || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({
+        success: false,
+        message: "PIN must be exactly 4 digits"
+      });
+    }
+
+    // Hash the PIN
+    const hashedPin = await bcrypt.hash(pin, 10);
+
+    // Check if user already has a PIN
+    const existingPin = await pool.query(
+      "SELECT id FROM user_pins WHERE user_id = $1",
+      [userId]
+    );
+
+    if (existingPin.rows.length > 0) {
+      // Update existing PIN
+      await pool.query(
+        `UPDATE user_pins 
+         SET pin_hash = $1, is_active = true, updated_at = CURRENT_TIMESTAMP 
+         WHERE user_id = $2`,
+        [hashedPin, userId]
+      );
+    } else {
+      // Insert new PIN
+      await pool.query(
+        `INSERT INTO user_pins (user_id, pin_hash) VALUES ($1, $2)`,
+        [userId, hashedPin]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: "PIN created successfully! You can now use PIN for quick login."
+    });
+
+  } catch (error) {
+    console.error("Create PIN error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to create PIN"
+    });
+  }
+});
+
+// Check if user has PIN set
+app.get("/api/auth/has-pin", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const result = await pool.query(
+      "SELECT id, is_active FROM user_pins WHERE user_id = $1 AND is_active = true",
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      hasPin: result.rows.length > 0
+    });
+
+  } catch (error) {
+    console.error("Check PIN error:", error);
+    res.status(500).json({
+      success: false,
+      hasPin: false
+    });
+  }
+});
+
+// Verify PIN and get user
+app.post("/api/auth/verify-pin", async (req, res) => {
+  try {
+    const { identifier, pin } = req.body;
+
+    if (!identifier || !pin) {
+      return res.status(400).json({
+        success: false,
+        message: "Identifier and PIN are required"
+      });
+    }
+
+    if (!/^\d{4}$/.test(pin)) {
+      return res.status(400).json({
+        success: false,
+        message: "PIN must be exactly 4 digits"
+      });
+    }
+
+    // Find user by email or phone
+    let userResult;
+    if (validator.isEmail(identifier)) {
+      userResult = await pool.query(
+        "SELECT * FROM users WHERE LOWER(email) = $1 AND status = 'Active'",
+        [identifier.toLowerCase()]
+      );
+    } else {
+      const phone = identifier.replace(/\s+/g, "");
+      userResult = await pool.query(
+        "SELECT * FROM users WHERE phone = $1 AND status = 'Active'",
+        [phone]
+      );
+    }
+
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    // Check PIN login attempts
+    const attemptsResult = await pool.query(
+      "SELECT * FROM pin_login_attempts WHERE user_id = $1",
+      [user.id]
+    );
+
+    let attempts = attemptsResult.rows[0];
+
+    if (attempts && attempts.locked_until && new Date(attempts.locked_until) > new Date()) {
+      const minutesLeft = Math.ceil((new Date(attempts.locked_until) - new Date()) / (1000 * 60));
+      return res.status(429).json({
+        success: false,
+        message: `Too many failed attempts. Login with Credentials.`,
+        locked: true,
+        minutesLeft
+      });
+    }
+
+    // Get user's PIN
+    const pinResult = await pool.query(
+      "SELECT pin_hash FROM user_pins WHERE user_id = $1 AND is_active = true",
+      [user.id]
+    );
+
+    if (pinResult.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "No PIN set for this account"
+      });
+    }
+
+    // Verify PIN
+    const isValid = await bcrypt.compare(pin, pinResult.rows[0].pin_hash);
+
+    if (!isValid) {
+      // Update failed attempts
+      let newAttemptCount = 1;
+      let lockedUntil = null;
+
+      if (attempts) {
+        newAttemptCount = attempts.attempt_count + 1;
+
+        // Lock after 5 failed attempts for 15 minutes
+        if (newAttemptCount >= 5) {
+          lockedUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes lock
+
+          await pool.query(
+            `UPDATE pin_login_attempts 
+             SET attempt_count = $1, locked_until = $2, updated_at = CURRENT_TIMESTAMP 
+             WHERE user_id = $3`,
+            [newAttemptCount, lockedUntil, user.id]
+          );
+
+          return res.status(429).json({
+            success: false,
+            message: "Too many failed attempts. Login with Credentials.",
+            locked: true,
+            minutesLeft: 15
+          });
+        } else {
+          await pool.query(
+            `UPDATE pin_login_attempts 
+             SET attempt_count = $1, updated_at = CURRENT_TIMESTAMP 
+             WHERE user_id = $2`,
+            [newAttemptCount, user.id]
+          );
+        }
+      } else {
+        await pool.query(
+          `INSERT INTO pin_login_attempts (user_id, attempt_count) VALUES ($1, $2)`,
+          [user.id, 1]
+        );
+      }
+
+      return res.status(401).json({
+        success: false,
+        message: `Invalid PIN or Not Registered.`,
+        attemptsLeft: 5 - newAttemptCount
+      });
+    }
+
+    // Reset attempts on successful login
+    await pool.query(
+      `DELETE FROM pin_login_attempts WHERE user_id = $1`,
+      [user.id]
+    );
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: user.id, role: user.role || "user" },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role || "user"
+      },
+      message: "PIN verified successfully"
+    });
+
+  } catch (error) {
+    console.error("PIN verification error:", error);
+    res.status(500).json({
+      success: false,
+      message: "PIN verification failed"
+    });
+  }
+});
+
+// Disable PIN (remove PIN login option)
+app.delete("/api/auth/disable-pin", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    await pool.query(
+      "UPDATE user_pins SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1",
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      message: "PIN login disabled successfully"
+    });
+
+  } catch (error) {
+    console.error("Disable PIN error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to disable PIN"
+    });
+  }
+});
+
+// Reset PIN (require password verification first)
+app.post("/api/auth/reset-pin", verifyToken, async (req, res) => {
+  try {
+    const { password, newPin } = req.body;
+    const userId = req.user.id;
+
+    if (!newPin || !/^\d{4}$/.test(newPin)) {
+      return res.status(400).json({
+        success: false,
+        message: "New PIN must be exactly 4 digits"
+      });
+    }
+
+    // Verify user's password
+    const userResult = await pool.query(
+      "SELECT password FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    const isValid = await bcrypt.compare(password, userResult.rows[0].password);
+
+    if (!isValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect"
+      });
+    }
+
+    // Update PIN
+    const hashedPin = await bcrypt.hash(newPin, 10);
+
+    await pool.query(
+      `INSERT INTO user_pins (user_id, pin_hash, is_active) 
+       VALUES ($1, $2, true) 
+       ON CONFLICT (user_id) 
+       DO UPDATE SET pin_hash = $2, is_active = true, updated_at = CURRENT_TIMESTAMP`,
+      [userId, hashedPin]
+    );
+
+    res.json({
+      success: true,
+      message: "PIN reset successfully"
+    });
+
+  } catch (error) {
+    console.error("Reset PIN error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to reset PIN"
+    });
+  }
+});
+
+
+
+// Check if user has PIN set
+app.get("/api/auth/check-user-pin/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const result = await pool.query(
+      "SELECT id FROM user_pins WHERE user_id = $1 AND is_active = true",
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      hasPin: result.rows.length > 0
+    });
+  } catch (error) {
+    console.error("Check user PIN error:", error);
+    res.json({ success: true, hasPin: false });
+  }
+});
+
+// Get user's PIN status (for authenticated users)
+app.get("/api/auth/pin-status", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const result = await pool.query(
+      "SELECT id, is_active, created_at, updated_at FROM user_pins WHERE user_id = $1",
+      [userId]
+    );
+
+    const hasPin = result.rows.length > 0 && result.rows[0].is_active;
+
+    res.json({
+      success: true,
+      hasPin,
+      pinInfo: hasPin ? {
+        createdAt: result.rows[0].created_at,
+        updatedAt: result.rows[0].updated_at
+      } : null
+    });
+
+  } catch (error) {
+    console.error("PIN status error:", error);
+    res.status(500).json({
+      success: false,
+      hasPin: false,
+      message: error.message
+    });
+  }
+});
+// ================= PIN ONLY LOGIN (No email/phone required) =================
+// Check user by identifier (for PIN login flow)
+app.post("/api/auth/check-user", async (req, res) => {
+  try {
+    const { identifier } = req.body;
+
+    if (!identifier) {
+      return res.status(400).json({ success: false, userId: null, exists: false, hasPin: false });
+    }
+
+    let userResult;
+    if (validator.isEmail(identifier)) {
+      userResult = await pool.query(
+        "SELECT id, name, status FROM users WHERE LOWER(email) = $1",
+        [identifier.toLowerCase()]
+      );
+    } else {
+      const phone = identifier.replace(/\s+/g, "");
+      userResult = await pool.query(
+        "SELECT id, name, status FROM users WHERE phone = $1",
+        [phone]
+      );
+    }
+
+    if (userResult.rows.length === 0) {
+      return res.json({
+        success: true,
+        userId: null,
+        exists: false,
+        hasPin: false
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    // Check if user has PIN set
+    const pinResult = await pool.query(
+      "SELECT id, pin_hash FROM user_pins WHERE user_id = $1 AND is_active = true AND pin_hash IS NOT NULL",
+      [user.id]
+    );
+
+    res.json({
+      success: true,
+      userId: user.id,
+      userName: user.name,
+      exists: true,
+      hasPin: pinResult.rows.length > 0 && pinResult.rows[0].pin_hash !== null
+    });
+  } catch (error) {
+    console.error("Check user error:", error);
+    res.status(500).json({ success: false, userId: null, exists: false, hasPin: false });
+  }
+});
+
+// ================= PIN ONLY LOGIN (No email/phone required) =================
+app.post("/api/auth/login-with-pin-only", async (req, res) => {
+  try {
+    const { pin, userId } = req.body;
+
+    if (!pin || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({
+        success: false,
+        message: "PIN must be exactly 4 digits"
+      });
+    }
+
+    let user = null;
+
+    // If userId is provided, use it directly
+    if (userId) {
+      const userResult = await pool.query(
+        "SELECT * FROM users WHERE id = $1 AND status = 'Active'",
+        [userId]
+      );
+      if (userResult.rows.length > 0) {
+        user = userResult.rows[0];
+      }
+    }
+
+    // If no user found by ID, find by PIN (only for the specific user)
+    if (!user) {
+      // IMPORTANT: We need to find the user FIRST before checking attempts
+      // Get all users with active PINs
+      const pinResult = await pool.query(`
+        SELECT up.user_id, up.pin_hash 
+        FROM user_pins up
+        WHERE up.is_active = true AND up.pin_hash IS NOT NULL AND up.pin_hash != ''
+      `);
+
+      // Find the user that matches this PIN
+      for (const row of pinResult.rows) {
+        try {
+          const isValid = await bcrypt.compare(pin, row.pin_hash);
+          if (isValid) {
+            const userResult = await pool.query(
+              "SELECT * FROM users WHERE id = $1 AND status = 'Active'",
+              [row.user_id]
+            );
+            if (userResult.rows.length > 0) {
+              user = userResult.rows[0];
+              break;
+            }
+          }
+        } catch (compareErr) {
+          console.error("Error comparing PIN for user", row.user_id, compareErr.message);
+          continue;
+        }
+      }
+    }
+
+    // If no user found with this PIN, return error (don't track attempts for non-existent user)
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid PIN or Not Registered. Please try again."
+      });
+    }
+
+    // Now we have a specific user - check attempts ONLY for this user
+    const attemptsResult = await pool.query(
+      "SELECT * FROM pin_login_attempts WHERE user_id = $1",
+      [user.id]
+    );
+
+    let attempts = attemptsResult.rows[0];
+
+    // Check if this specific user is locked
+    if (attempts && attempts.locked_until && new Date(attempts.locked_until) > new Date()) {
+      const minutesLeft = Math.ceil((new Date(attempts.locked_until) - new Date()) / (1000 * 60));
+      return res.status(400).json({
+        success: false,
+        message: `Too many failed attempts. Login with Credentials.`,
+        locked: true,
+        minutesLeft: minutesLeft
+      });
+    }
+
+    // Verify PIN for this specific user
+    const pinResult = await pool.query(
+      "SELECT pin_hash FROM user_pins WHERE user_id = $1 AND is_active = true",
+      [user.id]
+    );
+
+    if (pinResult.rows.length === 0 || !pinResult.rows[0].pin_hash) {
+      return res.status(400).json({
+        success: false,
+        message: "No PIN set for this account. Please login with credentials first."
+      });
+    }
+
+    const isValid = await bcrypt.compare(pin, pinResult.rows[0].pin_hash);
+
+    if (!isValid) {
+      let newAttemptCount = 1;
+      let lockedUntil = null;
+
+      if (attempts) {
+        newAttemptCount = attempts.attempt_count + 1;
+
+        // Lock after 5 failed attempts for 15 minutes - ONLY for this user
+        if (newAttemptCount >= 5) {
+          lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+
+          await pool.query(
+            `UPDATE pin_login_attempts 
+             SET attempt_count = $1, locked_until = $2, updated_at = NOW() 
+             WHERE user_id = $3`,
+            [newAttemptCount, lockedUntil, user.id]
+          );
+
+          return res.status(400).json({
+            success: false,
+            message: `Too many failed attempts. Login with Credentials.`,
+            locked: true,
+            minutesLeft: 15,
+            attemptsLeft: 0
+          });
+        } else {
+          await pool.query(
+            `UPDATE pin_login_attempts 
+             SET attempt_count = $1, updated_at = NOW() 
+             WHERE user_id = $2`,
+            [newAttemptCount, user.id]
+          );
+        }
+      } else {
+        await pool.query(
+          `INSERT INTO pin_login_attempts (user_id, attempt_count) VALUES ($1, $2)`,
+          [user.id, 1]
+        );
+      }
+
+      const remainingAttempts = 5 - newAttemptCount;
+      return res.status(400).json({
+        success: false,
+        message: remainingAttempts > 0
+          ? `Invalid PIN or Not Registered.`
+          : "Invalid PIN or Not Registered. Please try again later.",
+        attemptsLeft: remainingAttempts
+      });
+    }
+
+    // Reset attempts on successful login for this user only
+    await pool.query(
+      `DELETE FROM pin_login_attempts WHERE user_id = $1`,
+      [user.id]
+    );
+
+    const role = user.role ? user.role.toLowerCase() : "user";
+    const token = jwt.sign(
+      { id: user.id, role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role
+      },
+      message: "PIN login successful"
+    });
+
+  } catch (error) {
+    console.error("PIN only login error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error. Please try again later."
+    });
+  }
+});
+
+
+// ================= RESET PIN ATTEMPTS FOR A SPECIFIC USER (Admin only) =================
+app.post("/api/admin/reset-pin-attempts/:userId", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    await pool.query(
+      "DELETE FROM pin_login_attempts WHERE user_id = $1",
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      message: "PIN attempts reset successfully for user"
+    });
+  } catch (error) {
+    console.error("Reset PIN attempts error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to reset PIN attempts"
+    });
+  }
+});
+
+// ================= GET PIN ATTEMPTS STATUS FOR A USER =================
+app.get("/api/auth/pin-attempts-status", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const result = await pool.query(
+      "SELECT attempt_count, locked_until FROM pin_login_attempts WHERE user_id = $1",
+      [userId]
+    );
+
+    let isLocked = false;
+    let minutesLeft = 0;
+    let attemptsLeft = 5;
+
+    if (result.rows.length > 0) {
+      const attempts = result.rows[0];
+      attemptsLeft = 5 - (attempts.attempt_count || 0);
+
+      if (attempts.locked_until && new Date(attempts.locked_until) > new Date()) {
+        isLocked = true;
+        minutesLeft = Math.ceil((new Date(attempts.locked_until) - new Date()) / (1000 * 60));
+      }
+    }
+
+    res.json({
+      success: true,
+      attemptsLeft: Math.max(0, attemptsLeft),
+      isLocked,
+      minutesLeft
+    });
+  } catch (error) {
+    console.error("Get PIN attempts error:", error);
+    res.status(500).json({
+      success: false,
+      attemptsLeft: 5,
+      isLocked: false
+    });
+  }
+});
+
+// ================= SHIPROCKET CONFIGURATION ENDPOINTS =================
+// Get Shiprocket settings - Include default pickup location
+app.get("/api/admin/shiprocket-settings", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT key, value FROM settings WHERE key IN ('shiprocket_email', 'shiprocket_password', 'shiprocket_pickup_pincode', 'shiprocket_webhook_secret', 'shiprocket_default_pickup_id', 'shiprocket_default_pickup_name')"
+    );
+
+    const settings = {
+      shiprocket_email: '',
+      shiprocket_password: '',
+      shiprocket_pickup_pincode: '518508',
+      shiprocket_webhook_secret: '',
+      shiprocket_default_pickup_id: '',
+      shiprocket_default_pickup_name: ''
+    };
+
+    result.rows.forEach(row => {
+      if (row.key === 'shiprocket_password') {
+        settings[row.key] = row.value && row.value !== '' ? '********' : '';
+      } else {
+        settings[row.key] = row.value || '';
+      }
+    });
+
+    res.json({ success: true, settings });
+  } catch (error) {
+    console.error("Failed to fetch Shiprocket settings:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Update Shiprocket settings - Allow both super_admin and admin
+// Update Shiprocket settings - Add these fields
+app.put("/api/admin/shiprocket-settings", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const {
+      shiprocket_email,
+      shiprocket_password,
+      shiprocket_pickup_pincode,
+      shiprocket_webhook_secret,
+      shiprocket_default_pickup_id,
+      shiprocket_default_pickup_name
+    } = req.body;
+
+    console.log("Updating Shiprocket settings:", {
+      hasEmail: !!shiprocket_email,
+      hasPassword: !!shiprocket_password && shiprocket_password !== '********',
+      hasPickupPincode: !!shiprocket_pickup_pincode,
+      hasDefaultPickupId: !!shiprocket_default_pickup_id
+    });
+
+    const updates = [];
+
+    if (shiprocket_email !== undefined) {
+      updates.push(pool.query(
+        "INSERT INTO settings (key, value) VALUES ('shiprocket_email', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [shiprocket_email.trim()]
+      ));
+    }
+
+    if (shiprocket_password !== undefined && shiprocket_password !== '********' && shiprocket_password !== '') {
+      updates.push(pool.query(
+        "INSERT INTO settings (key, value) VALUES ('shiprocket_password', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [shiprocket_password]
+      ));
+    }
+
+    if (shiprocket_pickup_pincode !== undefined) {
+      updates.push(pool.query(
+        "INSERT INTO settings (key, value) VALUES ('shiprocket_pickup_pincode', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [shiprocket_pickup_pincode]
+      ));
+    }
+
+    if (shiprocket_webhook_secret !== undefined && shiprocket_webhook_secret !== '********') {
+      updates.push(pool.query(
+        "INSERT INTO settings (key, value) VALUES ('shiprocket_webhook_secret', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [shiprocket_webhook_secret]
+      ));
+    }
+
+    // Add default pickup location settings
+    if (shiprocket_default_pickup_id !== undefined) {
+      updates.push(pool.query(
+        "INSERT INTO settings (key, value) VALUES ('shiprocket_default_pickup_id', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [shiprocket_default_pickup_id]
+      ));
+    }
+
+    if (shiprocket_default_pickup_name !== undefined) {
+      updates.push(pool.query(
+        "INSERT INTO settings (key, value) VALUES ('shiprocket_default_pickup_name', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [shiprocket_default_pickup_name]
+      ));
+    }
+
+    await Promise.all(updates);
+
+    // Clear cache
+    clearShiprocketCache();
+
+    console.log("✅ Shiprocket settings updated successfully");
+
+    res.json({
+      success: true,
+      message: "Shiprocket settings updated successfully"
+    });
+  } catch (error) {
+    console.error("Failed to update Shiprocket settings:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+
+
+// Test Shiprocket credentials - Allow both super_admin and admin
+app.post("/api/admin/shiprocket-test", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    let { email, password, saveCredentials } = req.body;
+
+    console.log("Shiprocket test request:", {
+      hasEmail: !!email,
+      hasPassword: !!password && password !== '********',
+      saveCredentials
+    });
+
+    // If no credentials provided in request, try to get from database settings
+    if (!email || !password || password === '********' || email === '' || password === '') {
+      console.log("No valid credentials in request, fetching from database...");
+      const config = await getShiprocketConfig(true);
+      email = config.shiprocket_email;
+      password = config.shiprocket_password;
+
+      console.log("Database credentials:", {
+        hasEmail: !!email,
+        hasPassword: !!password && password !== '********',
+        emailPreview: email ? email.substring(0, 3) + '***' : 'none'
+      });
+
+      if (!email || email === '' || !password || password === '' || password === '********') {
+        return res.status(400).json({
+          success: false,
+          message: "No credentials found. Please enter email and password in Settings first."
+        });
+      }
+    }
+
+    // Validate email format
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format. Please enter a valid email address."
+      });
+    }
+
+    // Validate password is not empty
+    if (!password || password.trim() === '' || password === '********') {
+      return res.status(400).json({
+        success: false,
+        message: "Password is required. Please enter your Shiprocket password."
+      });
+    }
+
+    console.log("Testing Shiprocket credentials for email:", email.substring(0, 3) + '***');
+
+    const response = await fetch("https://apiv2.shiprocket.in/v1/external/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: email.trim(),
+        password: password
+      })
+    });
+
+    const data = await response.json();
+
+    console.log("Shiprocket test response status:", response.status);
+
+    if (response.ok && data.token) {
+      // If test was successful, save the credentials to database
+      await pool.query(
+        "INSERT INTO settings (key, value) VALUES ('shiprocket_email', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [email.trim()]
+      );
+      await pool.query(
+        "INSERT INTO settings (key, value) VALUES ('shiprocket_password', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [password]
+      );
+
+      console.log("✅ Credentials saved to database");
+
+      // Clear cache
+      clearShiprocketCache();
+
+      res.json({
+        success: true,
+        message: "✅ Credentials are valid! Shiprocket API is working correctly."
+      });
+    } else {
+      // Provide detailed error message
+      let errorMessage = "Invalid credentials. Please check your Shiprocket login details.";
+
+      if (data.message) {
+        const msg = data.message.toLowerCase();
+        if (msg.includes("invalid") || msg.includes("unauthorized")) {
+          errorMessage = "❌ Invalid email or password. Please verify your Shiprocket credentials.";
+        } else if (msg.includes("network") || msg.includes("connection")) {
+          errorMessage = "❌ Network error. Please check your internet connection.";
+        } else if (msg.includes("rate limit") || msg.includes("too many")) {
+          errorMessage = "❌ Too many attempts. Please try again after some time.";
+        } else {
+          errorMessage = `❌ Shiprocket error: ${data.message}`;
+        }
+      }
+
+      if (response.status === 401) {
+        errorMessage = "❌ Authentication failed (401). Please check your Shiprocket credentials.";
+      } else if (response.status === 403) {
+        errorMessage = "❌ Access denied (403). Please ensure your Shiprocket account has API access enabled.";
+      } else if (response.status === 500) {
+        errorMessage = "❌ Shiprocket server error (500). Please try again later.";
+      }
+
+      console.error("Shiprocket test failed:", errorMessage);
+      res.status(401).json({ success: false, message: errorMessage });
+    }
+  } catch (error) {
+    console.error("Shiprocket test error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Network error. Please check your connection and try again."
+    });
+  }
+});
+
+app.get("/api/admin/debug/shiprocket-connection", verifyToken, verifyAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const config = await getShiprocketConfig(true);
+
+    // Test 1: Check if credentials exist in DB
+    const hasEmail = !!config.shiprocket_email && config.shiprocket_email !== '';
+    const hasPassword = !!config.shiprocket_password && config.shiprocket_password !== '' && config.shiprocket_password !== '********';
+
+    if (!hasEmail || !hasPassword) {
+      return res.json({
+        success: false,
+        message: "Credentials not found in database",
+        hasEmail,
+        hasPassword,
+        emailValue: config.shiprocket_email ? config.shiprocket_email.substring(0, 3) + '***' : null
+      });
+    }
+
+    // Test 2: Try to authenticate
+    try {
+      const token = await authenticateShiprocket();
+      return res.json({
+        success: true,
+        message: "Shiprocket connection successful!",
+        hasToken: !!token,
+        tokenPreview: token ? token.substring(0, 20) + '...' : null
+      });
+    } catch (authError) {
+      return res.json({
+        success: false,
+        message: authError.message,
+        credentials: {
+          email: config.shiprocket_email ? config.shiprocket_email.substring(0, 3) + '***' : null,
+          hasPassword: hasPassword
+        }
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ================= CUSTOM LOCAL PDF INVOICE GENERATOR =================
+app.get("/api/admin/orders/:id/local-pdf", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userRole = req.user.role?.toLowerCase();
+
+    // 1. Fetch order details
+    const orderRes = await pool.query("SELECT * FROM orders WHERE id = $1", [id]);
+    if (orderRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    const order = orderRes.rows[0];
+
+    // 2. Fetch order items (scoped to vendor if not super_admin)
+    let itemsQuery = `
+      SELECT oi.*, p.name as product_name, p.product_code
+      FROM order_items oi
+      JOIN products p ON oi.product_id = p.id
+      WHERE oi.order_id = $1
+    `;
+    let params = [id];
+    if (userRole !== 'super_admin') {
+      itemsQuery += " AND p.vendor_id = $2";
+      params.push(req.user.id);
+    }
+    const itemsRes = await pool.query(itemsQuery, params);
+    const items = itemsRes.rows;
+
+    // 3. Initialize PDF Kit Document
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Invoice-ORD${id}.pdf"`);
+
+    doc.pipe(res);
+
+    // Brand Header
+    doc.fontSize(24).font('Helvetica-Bold').fillColor('#8E2139').text('JAYASTRA', { align: 'left' });
+    doc.fontSize(10).font('Helvetica').fillColor('#64748b').text('Premium Products | Since 2026', { align: 'left' });
+    doc.moveDown(1);
+
+    // Invoice Meta
+    doc.fontSize(16).font('Helvetica-Bold').fillColor('#1e293b').text('TAX INVOICE', { align: 'right' });
+    doc.fontSize(10).font('Helvetica').fillColor('#64748b').text(`Order ID: #ORD${order.id}`, { align: 'right' });
+    doc.text(`Date: ${new Date(order.created_at).toLocaleDateString('en-IN')}`, { align: 'right' });
+    doc.moveDown(2);
+
+    // Invoice Billing Split Details
+    const startY = doc.y;
+    doc.fontSize(11).font('Helvetica-Bold').fillColor('#475569').text('BILLED TO:', 50, startY);
+    doc.font('Helvetica').fillColor('#1e293b').text(order.customer_name || 'N/A', 50, startY + 15);
+    doc.text(order.address || 'N/A', 50, startY + 30, { width: 220 });
+    doc.text(`Phone: ${order.phone || 'N/A'}`, 50, startY + 65);
+    doc.text(`Email: ${order.email || 'N/A'}`, 50, startY + 80);
+
+    doc.font('Helvetica-Bold').fillColor('#475569').text('ORDER DETAILS:', 320, startY);
+    doc.font('Helvetica').fillColor('#1e293b').text(`Payment Method: ${order.payment_method || 'COD'}`, 320, startY + 15);
+    doc.text(`Payment Status: ${order.payment_status || 'Pending'}`, 320, startY + 30);
+    doc.text(`Order Status: ${order.order_status || 'Placed'}`, 320, startY + 45);
+
+    doc.moveDown(4);
+
+    // Structured Table Header
+    const tableTop = doc.y + 40;
+    doc.rect(50, tableTop, 500, 20).fill('#f1f5f9');
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#475569');
+    doc.text('SL No.', 60, tableTop + 5);
+    doc.text('Product Code', 110, tableTop + 5);
+    doc.text('Item Description', 210, tableTop + 5);
+    doc.text('Price (₹)', 360, tableTop + 5);
+    doc.text('Qty', 430, tableTop + 5);
+    doc.text('Total (₹)', 480, tableTop + 5);
+
+    // Structured Table Content Rows
+    let currentY = tableTop + 20;
+    items.forEach((item, index) => {
+      doc.fontSize(9).font('Helvetica').fillColor('#1e293b');
+      doc.text(String(index + 1), 60, currentY + 5);
+      doc.text(item.product_code || 'N/A', 110, currentY + 5);
+      doc.text(item.product_name || 'N/A', 210, currentY + 5, { width: 140 });
+
+      const price = parseFloat(item.price) || 0;
+      const qty = parseInt(item.quantity) || 0;
+      const total = price * qty;
+
+      doc.text(`₹${price.toFixed(2)}`, 360, currentY + 5);
+      doc.text(String(qty), 430, currentY + 5);
+      doc.text(`₹${total.toFixed(2)}`, 480, currentY + 5);
+
+      doc.strokeColor('#e2e8f0').lineWidth(1).moveTo(50, currentY + 20).lineTo(550, currentY + 20).stroke();
+      currentY += 20;
+    });
+
+    // Totals Block
+    doc.moveDown(2);
+    const totalsY = doc.y + 10;
+    const totalAmount = parseFloat(order.total_amount) || 0;
+    const discount = parseFloat(order.discount) || 0;
+    const subtotal = totalAmount + discount;
+
+    doc.fontSize(10).font('Helvetica').fillColor('#475569');
+    doc.text('Subtotal:', 350, totalsY);
+    doc.text(`₹${subtotal.toFixed(2)}`, 480, totalsY);
+
+    if (discount > 0) {
+      doc.text('Discount:', 350, totalsY + 15);
+      doc.text(`- ₹${discount.toFixed(2)}`, 480, totalsY + 15);
+    }
+
+    doc.font('Helvetica-Bold').fillColor('#8E2139');
+    doc.text('Grand Total:', 350, totalsY + 30);
+    doc.text(`₹${totalAmount.toFixed(2)}`, 480, totalsY + 30);
+
+    // Informational Footer Band
+    doc.moveDown(4);
+    const footerY = doc.y + 20;
+    doc.rect(50, footerY, 500, 30).fill('#fef2f2');
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#8E2139');
+    if (order.payment_method === 'COD') {
+      doc.text(`Cash on Delivery - Pay ₹${totalAmount.toFixed(2)} at the time of delivery`, 60, footerY + 10, { align: 'center' });
+    } else {
+      doc.text(`Payment Successful via ${order.payment_method}`, 60, footerY + 10, { align: 'center' });
+    }
+
+    doc.fontSize(8).font('Helvetica').fillColor('#94a3b8');
+    doc.text('Thank you for shopping with JAYASTRA!', 50, footerY + 45, { align: 'center' });
+    doc.text('For any queries, contact us at jayastrastore@gmail.com | +91 9652896180', 50, footerY + 60, { align: 'center' });
+
+    doc.end();
+  } catch (err) {
+    console.error("Local PDF generation error:", err);
+    res.status(500).json({ success: false, message: "Failed to generate local PDF" });
+  }
+});
+
+// ================= SECURE EXTERNAL FILE DOWNLOAD PROXY =================
+app.post("/api/admin/orders/proxy-download", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, message: "URL is required" });
+    }
+
+    // Stream download directly from Shiprocket's remote S3 bucket on your server
+    const fileRes = await fetch(url);
+    if (!fileRes.ok) {
+      throw new Error("Unable to fetch external document from remote storage");
+    }
+
+    const arrayBuffer = await fileRes.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Stream file binary directly to the browser
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(buffer);
+  } catch (error) {
+    console.error("Proxy download error:", error.message);
+    res.status(500).json({ success: false, message: "Server was unable to retrieve and download the requested file." });
+  }
+});
+
+
+// ================= DASHBOARD BANNER MANAGEMENT (SUPER ADMIN ONLY) =================
+
+// Get dashboard banner settings
+app.get("/api/admin/settings/dashboard-banner", verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT key, value FROM settings WHERE key IN ('dashboard_banner_url', 'dashboard_banner_alt', 'dashboard_banner_link')"
+    );
+
+    const banner = {
+      url: '',
+      alt: 'Dashboard Banner',
+      link: ''
+    };
+
+    result.rows.forEach(row => {
+      if (row.key === 'dashboard_banner_url') banner.url = row.value;
+      if (row.key === 'dashboard_banner_alt') banner.alt = row.value;
+      if (row.key === 'dashboard_banner_link') banner.link = row.value;
+    });
+
+    res.json({ success: true, banner });
+  } catch (error) {
+    console.error("Error fetching dashboard banner:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Update dashboard banner - Only Super Admin
+app.put("/api/admin/settings/dashboard-banner", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { url, alt, link } = req.body;
+
+    const updates = [];
+
+    if (url !== undefined) {
+      updates.push(pool.query(
+        "INSERT INTO settings (key, value) VALUES ('dashboard_banner_url', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [url]
+      ));
+    }
+
+    if (alt !== undefined) {
+      updates.push(pool.query(
+        "INSERT INTO settings (key, value) VALUES ('dashboard_banner_alt', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [alt]
+      ));
+    }
+
+    if (link !== undefined) {
+      updates.push(pool.query(
+        "INSERT INTO settings (key, value) VALUES ('dashboard_banner_link', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+        [link]
+      ));
+    }
+
+    await Promise.all(updates);
+
+    res.json({
+      success: true,
+      message: "Dashboard banner updated successfully"
+    });
+  } catch (error) {
+    console.error("Error updating dashboard banner:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Upload dashboard banner image - Only Super Admin
+app.post("/api/admin/settings/dashboard-banner/upload", verifyToken, verifySuperAdmin, uploadBannerMedia.single("image"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No image file provided" });
+    }
+
+    const imageUrl = `/uploads/banners/${req.file.filename}`;
+
+    // Save to settings
+    await pool.query(
+      "INSERT INTO settings (key, value) VALUES ('dashboard_banner_url', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = CURRENT_TIMESTAMP",
+      [imageUrl]
+    );
+
+    res.json({
+      success: true,
+      url: imageUrl,
+      message: "Banner uploaded successfully"
+    });
+  } catch (error) {
+    console.error("Error uploading dashboard banner:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Delete dashboard banner - Only Super Admin
+app.delete("/api/admin/settings/dashboard-banner", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    // Get current banner URL to delete the file
+    const result = await pool.query(
+      "SELECT value FROM settings WHERE key = 'dashboard_banner_url'"
+    );
+
+    if (result.rows.length > 0 && result.rows[0].value) {
+      const imagePath = path.join(UPLOAD_BASE_PATH, result.rows[0].value.replace('/uploads/', ''));
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+      }
+    }
+
+    // Clear the settings
+    await pool.query(
+      "UPDATE settings SET value = '' WHERE key IN ('dashboard_banner_url', 'dashboard_banner_alt', 'dashboard_banner_link')"
+    );
+
+    res.json({
+      success: true,
+      message: "Dashboard banner removed successfully"
+    });
+  } catch (error) {
+    console.error("Error deleting dashboard banner:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+
+// ================= TRANSFER PRODUCT OWNERSHIP (SUPER ADMIN ONLY) =================
+app.put("/api/admin/products/:id/transfer", verifyToken, verifySuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { vendor_id } = req.body;
+
+    if (!vendor_id || isNaN(parseInt(vendor_id))) {
+      return res.status(400).json({ success: false, message: "Valid vendor_id is required" });
+    }
+
+    // Check if product exists
+    const productCheck = await pool.query("SELECT id, vendor_id FROM products WHERE id = $1", [id]);
+    if (productCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    const currentVendorId = productCheck.rows[0].vendor_id;
+    if (currentVendorId === parseInt(vendor_id)) {
+      return res.status(400).json({ success: false, message: "Product already belongs to this vendor" });
+    }
+
+    // Check if target vendor exists and is a vendor
+    const vendorCheck = await pool.query(
+      "SELECT id, role FROM users WHERE id = $1 AND role = 'vendor'",
+      [vendor_id]
+    );
+    if (vendorCheck.rows.length === 0) {
+      return res.status(400).json({ success: false, message: "Target vendor not found or not a vendor" });
+    }
+
+    // Transfer ownership
+    await pool.query(
+      "UPDATE products SET vendor_id = $1, updated_at = NOW() WHERE id = $2",
+      [vendor_id, id]
+    );
+
+    res.json({
+      success: true,
+      message: `Product ownership transferred successfully to vendor ID ${vendor_id}`
+    });
+  } catch (error) {
+    console.error("Product transfer error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get("/", (req, res) => res.send("Jayastra API is running 🚀"));
+
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ success: false, message: 'File too large' });
+    return res.status(400).json({ success: false, message: err.message });
+  }
+  res.status(500).json({ success: false, message: err.message || "Server Error" });
+});
+
+// ================= START SERVER =================
+initDatabase().then(() => {
+  initRazorpay();
+  server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+});

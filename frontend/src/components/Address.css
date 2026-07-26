@@ -1,0 +1,540 @@
+.profile-address-container {
+  padding: 0;
+  background: transparent;
+}
+
+.profile-address-container h2 {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--dark-text);
+  margin-bottom: 16px;
+}
+
+/* ================= ADD BUTTON ================= */
+.profile-add-address-box {
+  border: 1.5px dashed var(--primary-rose);
+  padding: 10px;
+  color: var(--primary-rose);
+  font-weight: 700;
+  cursor: pointer;
+  margin-bottom: 16px;
+  text-align: center;
+  border-radius: 12px;
+  background: var(--light-rose);
+  transition: all 0.3s ease;
+  font-size: 12.5px;
+  letter-spacing: 0.5px;
+}
+
+.profile-add-address-box:hover {
+  background: var(--primary-rose);
+  color: white;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(183, 110, 121, 0.15);
+}
+
+.profile-add-address-btn {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ================= ADDRESS CARD ================= */
+.profile-address-card {
+  background: #fff;
+  border: 1px solid var(--border-color);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  position: relative;
+  transition: all 0.4s ease;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.02);
+  cursor: pointer;
+}
+
+.profile-address-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+  border-color: var(--primary-rose);
+}
+
+.profile-address-card.selected {
+  border: 2px solid var(--primary-rose);
+  background: var(--light-rose);
+}
+
+.profile-address-radio {
+  margin-top: 2px;
+  accent-color: var(--primary-rose);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.profile-address-content {
+  flex: 1;
+}
+
+.profile-address-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.profile-address-type {
+  background: var(--primary-rose);
+  color: white;
+  padding: 2px 8px;
+  font-size: 9px;
+  border-radius: 4px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.profile-address-name {
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--dark-text);
+  margin-bottom: 4px;
+}
+
+.profile-address-name span {
+  font-weight: 600;
+  color: var(--light-text);
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.profile-address-text {
+  font-size: 11.5px;
+  color: var(--light-text);
+  line-height: 1.4;
+}
+
+.profile-address-text b {
+  color: var(--dark-text);
+}
+
+/* ================= MENU ================= */
+.profile-address-menu {
+  position: relative;
+  cursor: pointer;
+  font-size: 15px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+
+.profile-address-menu:hover {
+  background: rgba(0,0,0,0.05);
+}
+
+.profile-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: 28px;
+  background: #fff;
+  border-radius: 6px;
+  width: 100px;
+  z-index: 10;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  animation: fadeIn 0.3s ease;
+}
+
+.profile-menu-dropdown div {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--light-text);
+  transition: 0.3s;
+}
+
+.profile-menu-dropdown div:hover {
+  background: var(--light-rose);
+  color: var(--primary-rose);
+}
+
+/* ================= CHOICE VIEW (inside modal) ================= */
+.profile-location-choice-view {
+  padding: 10px 0;
+}
+
+.profile-choice-title {
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 16px;
+  color: #2d2d2d;
+  text-align: center;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.profile-choice-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.profile-choice-card {
+  border: 1.5px solid #f0f0f0;
+  padding: 16px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.4s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  text-align: center;
+}
+
+.profile-choice-card i {
+  font-size: 18px;
+  color: var(--primary-rose);
+}
+
+.profile-choice-icon-wrap {
+  background: var(--light-rose);
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  transition: 0.3s;
+}
+
+.profile-choice-card strong {
+  font-size: 12px;
+  color: #333;
+  display: block;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.profile-choice-card:hover {
+  border-color: var(--primary-rose);
+  background: var(--light-rose);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 15px rgba(183, 110, 121, 0.1);
+}
+
+.profile-choice-card:hover .profile-choice-icon-wrap {
+  background: var(--primary-rose);
+}
+
+.profile-choice-card:hover .profile-choice-icon-wrap i {
+  color: white;
+}
+
+.profile-cancel-choice-btn {
+  background: #8E2139;
+  color: #fff;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 800;
+  transition: all 0.3s ease;
+  margin-top: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 12.5px;
+  box-shadow: 0 4px 10px rgba(142, 33, 57, 0.15);
+}
+
+.profile-cancel-choice-btn:hover {
+  background: #7a1c31;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 15px rgba(142, 33, 57, 0.2);
+}
+
+.profile-cancel-btn-action{
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ================= FORM FIELDS ================= */
+.profile-address-form-fields {
+  max-width: 100%;
+}
+
+.profile-input-field {
+  margin-bottom: 12px;
+}
+
+.profile-input-field label {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #8E2139;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding-left: 2px;
+}
+
+.profile-address-form-fields input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  font-size: 13px;
+  transition: all 0.3s ease;
+  outline: none;
+  background: #fafafa;
+  color: #2d2d2d;
+}
+
+.profile-address-form-fields input:focus {
+  border-color: #8E2139;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(142, 33, 57, 0.08);
+}
+
+.profile-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* ================= BUTTONS ================= */
+.profile-inline-form-actions {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.profile-btn-cancel-inline {
+  background: #f8f8f8;
+  color: #666;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+  transition: 0.3s;
+  font-size: 12.5px;
+}
+
+.profile-btn-cancel-inline:hover {
+  background: #eee;
+  color: #000;
+}
+
+.profile-btn-save-address-new {
+  background: #8E2139;
+  color: #fff;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 800;
+  transition: all 0.3s ease;
+  margin-top: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 12.5px;
+  box-shadow: 0 4px 10px rgba(142, 33, 57, 0.15);
+}
+
+.profile-btn-save-address-new:hover {
+  background: #7a1c31;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 15px rgba(142, 33, 57, 0.2);
+}
+
+/* ================= MODAL ICON ================= */
+.profile-modal-icon {
+  width: 44px;
+  height: 44px;
+  background: #fee2e2;
+  color: #ef4444;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  margin: 0 auto 12px;
+}
+
+/* ================= TOAST ================= */
+.profile-custom-toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 20000;
+  animation: profileToastSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes profileToastSlideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.profile-toast-content {
+  background: #1a1c23;
+  color: white;
+  padding: 10px 16px;
+  border-radius: 32px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.profile-toast-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.profile-toast-icon.success {
+  background: #059669;
+  color: white;
+}
+.profile-toast-icon.error {
+  background: #ef4444;
+  color: white;
+}
+.profile-toast-icon.info {
+  background: #3b82f6;
+  color: white;
+}
+
+.profile-toast-msg {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  letter-spacing: 0.1px;
+}
+
+.profile-toast-close {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: 0.3s;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  margin-left: 6px;
+  padding-left: 10px;
+}
+
+.profile-toast-close:hover {
+  color: white;
+}
+
+@media (max-width: 600px) {
+  .profile-custom-toast {
+    top: 16px;
+    right: 10px;
+    left: 10px;
+  }
+  .profile-toast-content {
+    min-width: unset;
+    width: 100%;
+  }
+}
+
+/* ================= RESPONSIVE OVERRIDES ================= */
+@media (max-width: 600px) {
+  .profile-form-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .profile-choice-options {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .profile-choice-card {
+    padding: 12px 6px;
+  }
+  .profile-choice-icon-wrap {
+    width: 36px;
+    height: 36px;
+  }
+  .profile-choice-card i {
+    font-size: 16px;
+  }
+  .profile-choice-card strong {
+    font-size: 11px;
+  }
+  .profile-inline-form-actions {
+    flex-direction: row;
+  }
+  .profile-btn-save-address-new,
+  .profile-btn-cancel-inline {
+    width: 100%;
+  }
+}
+
+/* ================= LOADER OVERLAY ================= */
+.profile-address-list-wrapper {
+  position: relative;
+  min-height: 100px;
+}
+
+.profile-address-loader-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  border-radius: 8px;
+}
+
+.profile-address-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--primary-rose);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: profile-spin 0.8s linear infinite;
+}
+
+@keyframes profile-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

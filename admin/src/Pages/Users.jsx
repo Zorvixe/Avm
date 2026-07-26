@@ -1,0 +1,710 @@
+import React, { useState, useEffect, useRef } from "react";
+import axios from '../utils/axiosConfig';
+import { toast } from "react-toastify";
+import "./Users.css";
+
+const API_URL = process.env.REACT_APP_API_URL;
+
+const Users = () => {
+  // Role from localStorage (set during login)
+  const userRole = localStorage.getItem("userRole") || "user";
+  const token = localStorage.getItem("token");
+
+  // Tab state (only those the user is allowed to see)
+  const allowedTabs = [];
+  if (userRole === "super_admin") {
+    allowedTabs.push("admins", "vendors", "customers");
+  } else if (userRole === "admin") {
+    allowedTabs.push("admins");   // admin can see admins list (but not create)
+  } else if (userRole === "vendor") {
+    allowedTabs.push("customers"); // vendor sees customers
+  }
+  const [activeTab, setActiveTab] = useState(allowedTabs[0] || "admins");
+
+  const [admins, setAdmins] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [customers, setCustomers] = useState([]);
+
+  const [search, setSearch] = useState("");
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [modalRole, setModalRole] = useState("admin");
+  const [showPassword, setShowPassword] = useState(false);
+  const [newUser, setNewUser] = useState({ name: "", email: "", password: "", phone: "", store_name: "" });
+
+  const [loading, setLoading] = useState(false);          // global (modal & delete)
+  const [tabLoading, setTabLoading] = useState(false);    // while fetching list
+  const [actionInProgress, setActionInProgress] = useState(null);
+
+  // Mobile search slide-down state
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchRef = useRef(null);
+
+  // ---------- EDIT MODAL STATE ----------
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editUser, setEditUser] = useState(null); // the user being edited
+  const [editForm, setEditForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    store_name: '',
+    address: '',
+    city: '',
+    state: '',
+    pincode: '',
+    gst_number: ''
+  });
+
+  // Close search panel when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (searchRef.current && !searchRef.current.contains(event.target)) {
+        setIsSearchOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // -------------------- Data fetching --------------------
+  const fetchAdmins = async () => {
+    try {
+      setTabLoading(true);
+      const res = await axios.get(`${API_URL}/admin/admins`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setAdmins(res.data.users);
+    } catch (err) {
+      toast.error("Failed to load admin users");
+      if (err.response?.status === 403) {
+        toast.warn("You don't have permission to view admins");
+      }
+    } finally {
+      setTabLoading(false);
+    }
+  };
+
+  const fetchVendors = async () => {
+    try {
+      setTabLoading(true);
+      const res = await axios.get(`${API_URL}/admin/vendors`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setVendors(res.data.users);
+    } catch (err) {
+      toast.error("Failed to load vendors");
+      if (err.response?.status === 403) {
+        toast.warn("You don't have permission to view vendors");
+      }
+    } finally {
+      setTabLoading(false);
+    }
+  };
+
+  const fetchCustomers = async () => {
+    try {
+      setTabLoading(true);
+      const endpoint = userRole === "vendor" ? "/vendor/customers" : "/admin/customers";
+      const res = await axios.get(`${API_URL}${endpoint}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setCustomers(res.data.users);
+    } catch (err) {
+      toast.error("Failed to load customers");
+    } finally {
+      setTabLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "admins") fetchAdmins();
+    else if (activeTab === "vendors") fetchVendors();
+    else if (activeTab === "customers") fetchCustomers();
+  }, [activeTab]);
+
+  // -------------------- Actions (only when allowed) --------------------
+  const toggleStatus = async (id) => {
+    if (userRole !== "super_admin") {
+      toast.warn("Only Super Admin can change user status");
+      return;
+    }
+    try {
+      setActionInProgress({ type: 'status', id });
+      await axios.put(`${API_URL}/admin/users/status/${id}`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success("User status updated");
+      await fetchCustomers(); // only customers have status toggle
+    } catch (err) {
+      toast.error("Status update failed");
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const toggleRole = async (id) => {
+    if (userRole !== "super_admin") {
+      toast.warn("Only Super Admin can promote customers to admin");
+      return;
+    }
+    try {
+      setActionInProgress({ type: 'role', id });
+      await axios.put(`${API_URL}/admin/users/role/${id}`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success("Role updated");
+      await fetchAdmins();
+      await fetchCustomers();
+    } catch (err) {
+      toast.error("Role update failed");
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const deleteUser = async (id, role) => {
+    if (userRole !== "super_admin") {
+      toast.warn("Only Super Admin can delete users");
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to delete this ${role}?`)) return;
+    try {
+      setLoading(true);
+      await axios.delete(`${API_URL}/admin/admins/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success(`${role} deleted`);
+      if (role === 'admin') await fetchAdmins();
+      else if (role === 'vendor') await fetchVendors();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Delete failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddUser = async (e) => {
+    e.preventDefault();
+    if (userRole !== "super_admin") {
+      toast.warn("Only Super Admin can create new users");
+      return;
+    }
+    try {
+      setLoading(true);
+      const payload = {
+        ...newUser,
+        role: modalRole,
+        store_name: modalRole === 'vendor' ? newUser.store_name : undefined,
+      };
+      const res = await axios.post(`${API_URL}/admin/users/create-admin`, payload, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data.success) {
+        toast.success(`${modalRole === 'admin' ? 'Admin' : 'Vendor'} added successfully`);
+        setShowAddModal(false);
+        setNewUser({ name: "", email: "", password: "", phone: "", store_name: "" });
+        if (modalRole === 'admin') await fetchAdmins();
+        else await fetchVendors();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to add user");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ---------- EDIT FUNCTIONS ----------
+  const openEditModal = (user) => {
+    setEditUser(user);
+    setEditForm({
+      name: user.name || '',
+      email: user.email || '',
+      phone: user.phone || '',
+      store_name: user.store_name || '',
+      address: user.address || '',
+      city: user.city || '',
+      state: user.state || '',
+      pincode: user.pincode || '',
+      gst_number: user.gst_number || ''
+    });
+    setShowEditModal(true);
+  };
+
+  const closeEditModal = () => {
+    setShowEditModal(false);
+    setEditUser(null);
+  };
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    if (!editUser) return;
+    try {
+      setLoading(true);
+      const payload = {};
+      // Only send fields that have changed (or send all, server will ignore undefined)
+      Object.keys(editForm).forEach(key => {
+        if (editForm[key] !== undefined) payload[key] = editForm[key];
+      });
+
+      await axios.put(`${API_URL}/admin/users/${editUser.id}`, payload, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success("User updated successfully");
+      closeEditModal();
+      // Refresh the current list
+      if (activeTab === "admins") await fetchAdmins();
+      else if (activeTab === "vendors") await fetchVendors();
+      else if (activeTab === "customers") await fetchCustomers();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Update failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // -------------------- Helpers --------------------
+  const getListForTab = () => {
+    if (activeTab === "admins") return admins;
+    if (activeTab === "vendors") return vendors;
+    return customers;
+  };
+
+  const filteredList = getListForTab().filter(user => {
+    const name = (user.name || '').toLowerCase();
+    const email = (user.email || '').toLowerCase();
+    const searchTerm = search.toLowerCase();
+    return name.includes(searchTerm) || email.includes(searchTerm);
+  });
+
+  const toggleSearch = () => {
+    setIsSearchOpen(!isSearchOpen);
+  };
+
+  // -------------------- Render --------------------
+  return (
+    <div className="users-container">
+      {/* Global overlay (modal & delete) */}
+      {loading && (
+        <div className="users-loader-overlay">
+          <div className="users-loader-container">
+            <div className="users-spinner"></div>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="users-header">
+        <div className="users-mobile-header">
+          <h4>Users</h4>
+          {/* ---- Mobile search icon ---- */}
+          <button
+            className="mobile-icon-btn search-toggle"
+            onClick={toggleSearch}
+            aria-label="Search"
+          >
+            <i className="bi bi-search"></i>
+          </button>
+        </div>
+        <div className="header-actions">
+          {/* ---- Desktop search (hidden on mobile) ---- */}
+          <div className="search-box desktop-search-users">
+            <i className="bi bi-search"></i>
+            <input
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {userRole === "super_admin" && (
+            <div className="create-buttons">
+              <button className="add-admin-btn" onClick={() => { setModalRole('admin'); setShowAddModal(true); }} disabled={loading}>
+                <i className="bi bi-person-plus"></i> Add Admin
+              </button>
+              <button className="add-vendor-btn" onClick={() => { setModalRole('vendor'); setShowAddModal(true); }} disabled={loading}>
+                <i className="bi bi-shop"></i> Add Vendor
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ---- Mobile Search Slide‑down ---- */}
+      {isSearchOpen && (
+        <div className="mobile-search-slide" ref={searchRef}>
+          <div className="slide-content">
+            <i className="bi bi-search"></i>
+            <input
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoFocus
+            />
+            <button className="slide-close" onClick={() => setIsSearchOpen(false)}>
+              <i className="bi bi-x-lg"></i>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs (only allowed ones) */}
+      <div className="users-tabs">
+        {allowedTabs.includes("admins") && (
+          <button
+            className={`tab-btn ${activeTab === "admins" ? "active" : ""}`}
+            onClick={() => setActiveTab("admins")}
+          >
+            <i className="bi bi-shield-lock"></i> Admin Users
+          </button>
+        )}
+        {allowedTabs.includes("vendors") && (
+          <button
+            className={`tab-btn ${activeTab === "vendors" ? "active" : ""}`}
+            onClick={() => setActiveTab("vendors")}
+          >
+            <i className="bi bi-bag-check"></i> Vendors
+          </button>
+        )}
+        {allowedTabs.includes("customers") && (
+          <button
+            className={`tab-btn ${activeTab === "customers" ? "active" : ""}`}
+            onClick={() => setActiveTab("customers")}
+          >
+            <i className="bi bi-people"></i> Customers
+          </button>
+        )}
+      </div>
+
+      {/* Table */}
+      <div className="users-table">
+        {tabLoading ? (
+          <div className="users-loading-state">
+            <div className="users-spinner-small"></div>
+            <p>Loading {activeTab}...</p>
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                {activeTab === "customers" && (
+                  <>
+                    <th>Total Orders</th>
+                    <th>Total Purchase</th>
+                  </>
+                )}
+                {activeTab === "vendors" && <th>Store Name</th>}
+                <th>Role</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredList.length === 0 ? (
+                <tr className="users-empty-row">
+                  <td colSpan={
+                    activeTab === "customers" ? 8 :
+                      activeTab === "vendors" ? 7 : 6
+                  }>
+                    <div className="users-empty-state">
+                      <i className="bi bi-people"></i>
+                      <p>No users found</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredList.map(user => (
+                  <tr key={user.id}>
+                    <td>{user.name}</td>
+                    <td>{user.email}</td>
+                    <td>{user.phone || "-"}</td>
+                    {activeTab === "customers" && (
+                      <>
+                        <td>{user.total_orders || 0}</td>
+                        <td>₹{(user.total_purchase || 0).toLocaleString()}</td>
+                      </>
+                    )}
+                    {activeTab === "vendors" && <td>{user.store_name || "-"}</td>}
+                    <td>
+                      <span className={`role-badge ${user.role}`}>
+                        {user.role}
+                      </span>
+                    </td>
+                    <td>
+                      <span  className={`status-badge ${user.status === "Active" ? "active" : "blocked"}`}>
+                        {user.status}
+                      </span>
+                    </td>
+                    <td className="actions">
+                      <button className="view-btn" onClick={() => setSelectedUser(user)} title="View Details">
+                        <i className="bi bi-eye"></i>
+                      </button>
+
+                      {/* EDIT BUTTON - visible to super_admin, and to admin if target is not admin/super_admin */}
+                      {(userRole === 'super_admin' || (userRole === 'admin' && user.role !== 'admin' && user.role !== 'super_admin')) && (
+                        <button
+                          className="edit-btn"
+                          onClick={() => openEditModal(user)}
+                          title="Edit User"
+                        >
+                          <i className="bi bi-pencil-square"></i>
+                        </button>
+                      )}
+
+                      {activeTab !== "customers" && userRole === "super_admin" && (
+                        <button
+                          className="delete-btn"
+                          onClick={() => deleteUser(user.id, activeTab === "admins" ? "admin" : "vendor")}
+                          disabled={loading}
+                          title="Delete"
+                        >
+                          <i className="bi bi-trash"></i>
+                        </button>
+                      )}
+
+                      {activeTab === "customers" && userRole === "super_admin" && (
+                        <>
+                          <button
+                            className="role-btn"
+                            onClick={() => toggleRole(user.id)}
+                            disabled={actionInProgress?.type === 'role' && actionInProgress?.id === user.id}
+                            title="Promote to Admin"
+                          >
+                            {actionInProgress?.type === 'role' && actionInProgress?.id === user.id ? (
+                              <div className="btn-inline-spinner"></div>
+                            ) : (
+                              <i className="bi bi-shield-plus"></i>
+                            )}
+                          </button>
+
+                          <button
+                            className={user.status === "Active" ? "block-btn" : "unblock-btn"}
+                            onClick={() => toggleStatus(user.id)}
+                            disabled={actionInProgress?.type === 'status' && actionInProgress?.id === user.id}
+                            title={user.status === "Active" ? "Block User" : "Unblock User"}
+                          >
+                            {actionInProgress?.type === 'status' && actionInProgress?.id === user.id ? (
+                              <div className="btn-inline-spinner"></div>
+                            ) : (
+                              <i className={`bi ${user.status === "Active" ? "bi-person-x" : "bi-person-check"}`}></i>
+                            )}
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* User Details Modal */}
+      {selectedUser && (
+        <div className="user-modal" onClick={() => setSelectedUser(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h5>User Details</h5>
+              <button onClick={() => setSelectedUser(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="user-detail-item">
+                <span className="detail-label">Name:</span>
+                <span className="detail-value">{selectedUser.name}</span>
+              </div>
+              <div className="user-detail-item">
+                <span className="detail-label">Email:</span>
+                <span className="detail-value">{selectedUser.email}</span>
+              </div>
+              <div className="user-detail-item">
+                <span className="detail-label">Phone:</span>
+                <span className="detail-value">{selectedUser.phone || "-"}</span>
+              </div>
+              {activeTab === "vendors" && (
+                <div className="user-detail-item">
+                  <span className="detail-label">Store Name:</span>
+                  <span className="detail-value">{selectedUser.store_name || "-"}</span>
+                </div>
+              )}
+              {activeTab === "customers" && (
+                <>
+                  <div className="user-detail-item">
+                    <span className="detail-label">Total Orders:</span>
+                    <span className="detail-value">{selectedUser.total_orders || 0}</span>
+                  </div>
+                  <div className="user-detail-item">
+                    <span className="detail-label">Total Purchase:</span>
+                    <span className="detail-value">₹{(selectedUser.total_purchase || 0).toLocaleString()}</span>
+                  </div>
+                </>
+              )}
+              <div className="user-detail-item">
+                <span className="detail-label">Role:</span>
+                <span className="detail-value">{selectedUser.role}</span>
+              </div>
+              <div className="user-detail-item">
+                <span className="detail-label">Status:</span>
+                <span className="detail-value">{selectedUser.status}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Admin/Vendor Modal (Super Admin only) */}
+      {showAddModal && userRole === "super_admin" && (
+        <div className="user-modal" onClick={() => setShowAddModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h5>Add {modalRole === 'admin' ? 'Admin' : 'Vendor'}</h5>
+              <button onClick={() => setShowAddModal(false)}>✕</button>
+            </div>
+            <form onSubmit={handleAddUser} className="modal-body">
+              <div className="form-group mb-3">
+                <label>Full Name <span className="required-star">*</span></label>
+                <input type="text" className="form-control" required value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} disabled={loading} />
+              </div>
+              <div className="form-group mb-3">
+                <label>Email <span className="required-star">*</span></label>
+                <input type="email" className="form-control" required value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} disabled={loading} />
+              </div>
+              <div className="form-group mb-3">
+                <label>Password <span className="required-star">*</span></label>
+                <div className="password-input-wrapper">
+                  <input type={showPassword ? "text" : "password"} className="form-control" required value={newUser.password} onChange={(e) => setNewUser({ ...newUser, password: e.target.value })} disabled={loading} />
+                  <i className={`bi ${showPassword ? "bi-eye-slash" : "bi-eye"}`} onClick={() => setShowPassword(!showPassword)}></i>
+                </div>
+              </div>
+              <div className="form-group mb-3">
+                <label>Phone (Optional)</label>
+                <input type="text" className="form-control" value={newUser.phone} onChange={(e) => setNewUser({ ...newUser, phone: e.target.value })} disabled={loading} />
+              </div>
+              {modalRole === 'vendor' && (
+                <div className="form-group mb-3">
+                  <label>Store Name (Optional)</label>
+                  <input type="text" className="form-control" value={newUser.store_name} onChange={(e) => setNewUser({ ...newUser, store_name: e.target.value })} disabled={loading} />
+                </div>
+              )}
+              <button type="submit" className="btn-submit w-100" disabled={loading}>
+                {loading ? <><div className="btn-spinner"></div> Creating...</> : `Create ${modalRole === 'admin' ? 'Admin' : 'Vendor'}`}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========== EDIT USER MODAL ========== */}
+      {showEditModal && editUser && (
+        <div className="user-modal" onClick={closeEditModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h5>Edit User</h5>
+              <button onClick={closeEditModal}>✕</button>
+            </div>
+            <form onSubmit={handleEditSubmit} className="modal-body">
+              <div className="form-group mb-3">
+                <label>Full Name</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="form-group mb-3">
+                <label>Email</label>
+                <input
+                  type="email"
+                  className="form-control"
+                  value={editForm.email}
+                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="form-group mb-3">
+                <label>Phone</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editForm.phone}
+                  onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                />
+              </div>
+              {/* Show store_name only for vendors */}
+              {editUser.role === 'vendor' && (
+                <div className="form-group mb-3">
+                  <label>Store Name</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={editForm.store_name}
+                    onChange={(e) => setEditForm({ ...editForm, store_name: e.target.value })}
+                  />
+                </div>
+              )}
+              <div className="form-group mb-3">
+                <label>Address</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editForm.address}
+                  onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                />
+              </div>
+              <div className="form-row">
+                <div className="form-group mb-3 col">
+                  <label>City</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={editForm.city}
+                    onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
+                  />
+                </div>
+                <div className="form-group mb-3 col">
+                  <label>State</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={editForm.state}
+                    onChange={(e) => setEditForm({ ...editForm, state: e.target.value })}
+                  />
+                </div>
+                <div className="form-group mb-3 col">
+                  <label>Pincode</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={editForm.pincode}
+                    onChange={(e) => setEditForm({ ...editForm, pincode: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="form-group mb-3">
+                <label>GST Number</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editForm.gst_number}
+                  onChange={(e) => setEditForm({ ...editForm, gst_number: e.target.value })}
+                />
+              </div>
+
+              <button type="submit" className="btn-submit w-100" disabled={loading}>
+                {loading ? <><div className="btn-spinner"></div> Updating...</> : "Update User"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Users;

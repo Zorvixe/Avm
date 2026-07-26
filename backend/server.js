@@ -1262,11 +1262,11 @@ app.post("/api/auth/register", async (req, res) => {
         const msg = {
           to: email,
           from: process.env.FROM_EMAIL,
-          subject: "Welcome to Jayastra Store!",
+          subject: "Welcome to AVM Store!",
           html: `
       < div style = "font-family: Arial, sans-serif; padding: 20px;" >
               <h2 style="color: #8E2139;">Welcome ${name}!</h2>
-              <p>Thank you for registering with Jayastra Store.</p>
+              <p>Thank you for registering with AVM Store.</p>
               ${pinSet ? '<p>Your PIN has been set up successfully for quick login.</p>' : ''}
               <p>Start shopping and enjoy exclusive offers!</p>
               <a href="${process.env.FRONTEND_URL}" style="background: #8E2139; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Shop Now</a>
@@ -2149,8 +2149,8 @@ app.post("/api/vendor/pickup-addresses", verifyToken, async (req, res) => {
       const payload = {
         pickup_location: location_name,
         name: location_name,
-        email: req.user.email || "jayastrastore@gmail.com",
-        phone: req.user.phone || "9652896180",
+        email: req.user.email || "avmagrilifescience@gmail.com",
+        phone: req.user.phone || "9392421771",
         address: formattedAddress,
         address_2: address_line2 || "",
         city: city,
@@ -2286,8 +2286,8 @@ app.put("/api/vendor/pickup-addresses/:id", verifyToken, async (req, res) => {
         const payload = {
           pickup_location: location_name,
           name: location_name,
-          email: req.user.email || "jayastrastore@gmail.com",
-          phone: req.user.phone || "9652896180",
+          email: req.user.email || "avmagrilifescience@gmail.com",
+          phone: req.user.phone || "9392421771",
           address: address_line1,
           address_2: address_line2 || "",
           city: city,
@@ -2498,8 +2498,8 @@ app.post("/api/vendor/pickup-addresses/:id/sync", verifyToken, async (req, res) 
     const payload = {
       pickup_location: address.location_name,
       name: address.location_name,
-      email: vendor.email || "jayastrastore@gmail.com",
-      phone: vendor.phone || "9652896180",
+      email: vendor.email || "avmagrilifescience@gmail.com",
+      phone: vendor.phone || "9392421771",
       address: address.address_line1,
       address_2: address.address_line2 || "",
       city: address.city,
@@ -3337,7 +3337,7 @@ app.get("/api/admin/products/check-product-code", verifyToken, verifyAdminVendor
 
 app.get("/api/admin/products/next-available-code", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
   try {
-    let basePattern = "JAYA-";
+    let basePattern = "AVM-";
     let counter = 1;
     let found = false;
     let candidate = "";
@@ -3353,7 +3353,7 @@ app.get("/api/admin/products/next-available-code", verifyToken, verifyAdminVendo
     }
     res.json({ success: true, nextId: candidate });
   } catch (err) {
-    res.json({ success: true, nextId: "JAYA-001" });
+    res.json({ success: true, nextId: "AVM-001" });
   }
 });
 
@@ -3500,19 +3500,19 @@ app.get("/api/product/:uuid", async (req, res) => {
 
 app.get("/api/admin/products/next-id", verifyToken, verifyAdminVendorIndividualAccess, async (req, res) => {
   try {
-    const result = await pool.query(`SELECT product_code FROM products WHERE product_code LIKE 'JAYA-%' ORDER BY id DESC LIMIT 1`);
-    let nextId = "JAYA-001";
+    const result = await pool.query(`SELECT product_code FROM products WHERE product_code LIKE 'AVM-%' ORDER BY id DESC LIMIT 1`);
+    let nextId = "AVM-001";
     if (result && result.rows.length > 0) {
       const lastId = result.rows[0].product_code;
       if (lastId && lastId.includes("-")) {
         const parts = lastId.split("-");
         const lastNumber = parseInt(parts[1]);
-        if (!isNaN(lastNumber)) nextId = `JAYA - ${(lastNumber + 1).toString().padStart(3, '0')} `;
+        if (!isNaN(lastNumber)) nextId = `AVM - ${(lastNumber + 1).toString().padStart(3, '0')} `;
       }
     }
     res.json({ success: true, nextId });
   } catch (error) {
-    res.json({ success: true, nextId: "JAYA-001" });
+    res.json({ success: true, nextId: "AVM-001" });
   }
 });
 
@@ -5648,7 +5648,7 @@ app.get("/api/admin/dashboard/stats-by-date", verifyToken, verifyAnyAdmin, async
     let pendingPayment = {
       count: 0,
       amount: 0,
-      supplierName: userRole !== 'super_admin' ? "Jayastra Platform Admin" : "Vendor Partner",
+      supplierName: userRole !== 'super_admin' ? "AVM Platform Admin" : "Vendor Partner",
       issueDate: ""
     };
 
@@ -5656,7 +5656,7 @@ app.get("/api/admin/dashboard/stats-by-date", verifyToken, verifyAnyAdmin, async
       pendingPayment = {
         count: dbPayout.invoice_count || 0,
         amount: parseFloat(dbPayout.total_amount) || 0,
-        supplierName: userRole !== 'super_admin' ? "Jayastra Platform Admin" : (dbPayout.supplier_name || "Vendor Partner"),
+        supplierName: userRole !== 'super_admin' ? "AVM Platform Admin" : (dbPayout.supplier_name || "Vendor Partner"),
         issueDate: dbPayout.latest_date ? new Date(dbPayout.latest_date).toLocaleDateString('en-IN', {
           day: 'numeric', month: 'short', year: 'numeric'
         }) : ""
@@ -6264,7 +6264,7 @@ app.post("/api/admin/orders/:id/shiprocket", verifyToken, verifyAdminVendorIndiv
 
     // Create Shiprocket order payload
     const payload = {
-      order_id: `JAYASTRA-${order.id}`,
+      order_id: `AVM-${order.id}`,
       order_date: new Date(order.created_at).toISOString().split('T')[0] + " 10:00",
       pickup_location: selectedPickupLocation.name,
       billing_customer_name: (order.customer_name || "Customer").substring(0, 100),
@@ -8101,7 +8101,7 @@ app.get("/api/admin/payouts/monthly-statement/download", verifyToken, verifyAdmi
     doc.fontSize(24)
       .font('Helvetica-Bold')
       .fillColor('#8E2139')
-      .text('JAYASTRA STORE', { align: 'center' });
+      .text('AVM STORE', { align: 'center' });
 
     doc.fontSize(16)
       .fillColor('#333333')
@@ -8195,7 +8195,7 @@ app.get("/api/admin/payouts/monthly-statement/download", verifyToken, verifyAdmi
     const footerY = doc.y;
     doc.fontSize(8)
       .fillColor('#9CA3AF')
-      .text('This is a computer generated statement. For queries, contact accounts@jayastra.com', 50, footerY, { align: 'center' })
+      .text('This is a computer generated statement. For queries, contact accounts@AVM.com', 50, footerY, { align: 'center' })
       .text(`Generated on: ${new Date().toLocaleString()}`, 50, footerY + 15, { align: 'center' });
 
     doc.end();
@@ -9561,7 +9561,7 @@ app.get("/api/admin/orders/:id/local-pdf", verifyToken, verifyAdminVendorIndivid
     doc.pipe(res);
 
     // Brand Header
-    doc.fontSize(24).font('Helvetica-Bold').fillColor('#8E2139').text('JAYASTRA', { align: 'left' });
+    doc.fontSize(24).font('Helvetica-Bold').fillColor('#8E2139').text('AVM', { align: 'left' });
     doc.fontSize(10).font('Helvetica').fillColor('#64748b').text('Premium Products | Since 2026', { align: 'left' });
     doc.moveDown(1);
 
@@ -9649,8 +9649,8 @@ app.get("/api/admin/orders/:id/local-pdf", verifyToken, verifyAdminVendorIndivid
     }
 
     doc.fontSize(8).font('Helvetica').fillColor('#94a3b8');
-    doc.text('Thank you for shopping with JAYASTRA!', 50, footerY + 45, { align: 'center' });
-    doc.text('For any queries, contact us at jayastrastore@gmail.com | +91 9652896180', 50, footerY + 60, { align: 'center' });
+    doc.text('Thank you for shopping with AVM!', 50, footerY + 45, { align: 'center' });
+    doc.text('For any queries, contact us at avmagrilifescience@gmail.com | +91 9392421771', 50, footerY + 60, { align: 'center' });
 
     doc.end();
   } catch (err) {
@@ -9857,7 +9857,7 @@ app.put("/api/admin/products/:id/transfer", verifyToken, verifySuperAdmin, async
   }
 });
 
-app.get("/", (req, res) => res.send("Jayastra API is running 🚀"));
+app.get("/", (req, res) => res.send("AVM API is running 🚀"));
 
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {

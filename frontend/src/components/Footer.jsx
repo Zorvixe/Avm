@@ -44,13 +44,13 @@ const Footer = () => {
           <div className="col-12 col-lg-4 footer-col contact-col">
             <h4 className="footer-heading">Contact Info</h4>
             <ul className="footer-contact-list">
-              <li><strong>Phone:</strong> +91 8328590444  / +91 9652896180</li>
-              <li><strong>Email:</strong> jayastrastore@gmail.com</li>
+              <li><strong>Phone:</strong> +91 9392421771</li>
+              <li><strong>Email:</strong> avmagrilifescience@gmail.com</li>
               <li><strong>Address:</strong> 2-62 K.Bollavaram, Andhra Pradesh, Gadiwemula, Nandyal </li>
             </ul>
 
             <div className="footer-social-icons">
-              <a href="tel:+918328590444" aria-label="Phone" className="social-icon ph"><i className="bi bi-telephone"></i></a>
+              <a href="tel:+919392421771" aria-label="Phone" className="social-icon ph"><i className="bi bi-telephone"></i></a>
               <a href="https://www.instagram.com/jayastra.in" target="_blank" rel="noopener noreferrer" aria-label="Instagram" className="social-icon ig"><i className="bi bi-instagram"></i></a>
               <a href="https://maps.app.goo.gl/2ZMKquxJ3HGTVXhA9" target="_blank" rel="noopener noreferrer" aria-label="Location" className="social-icon loc"><i className="bi bi-geo-alt"></i></a>
             </div>
@@ -59,7 +59,7 @@ const Footer = () => {
 
         {/* WhatsApp Enquire Row */}
         <div className="footer-bottom-row">
-          <a href="https://wa.me/918328590444" target="_blank" rel="noopener noreferrer" className="whatsapp-enquire-btn">
+          <a href="https://wa.me/919392421771" target="_blank" rel="noopener noreferrer" className="whatsapp-enquire-btn">
             <i className="bi bi-whatsapp"></i> Enquire on WhatsApp
           </a>
         </div>

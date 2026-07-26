@@ -140,7 +140,7 @@ const Contact = () => {
                     </div>
                     <div className="info-text">
                       <h4>Call Us</h4>
-                      <p>+91 8328590444</p>
+                      <p>+91 9392421771</p>
                     </div>
                   </div>
 
@@ -150,7 +150,7 @@ const Contact = () => {
                     </div>
                     <div className="info-text">
                       <h4>Email Support</h4>
-                      <p>jayastrastore@gmail.com</p>
+                      <p>avmagrilifescience@gmail.com</p>
                     </div>
                   </div>
 

@@ -8,14 +8,14 @@ const About = () => {
     {
       id: 1,
       title: "The Timeless Art of Handwoven Silks",
-      excerpt: "Dive into the rich heritage of Indian handlooms. Discover why authentic JAYASTRA silks and weaves are a must-have for every celebration...",
+      excerpt: "Dive into the rich heritage of Indian handlooms. Discover why authentic AVM silks and weaves are a must-have for every celebration...",
       date: "March 20, 2026",
       image: "/assets/kanchip.jpeg"
     },
     {
       id: 2,
       title: "Styling Luxury Weaves for the Modern Woman",
-      excerpt: "From sarees to lehengas and dupattas, here are 5 ways to drape and style JAYASTRA's luxury collection for an elegant and powerful modern look...",
+      excerpt: "From sarees to lehengas and dupattas, here are 5 ways to drape and style AVM's luxury collection for an elegant and powerful modern look...",
       date: "March 28, 2026",
       image: "/assets/sarry3.jpeg"
     },
@@ -48,10 +48,10 @@ const About = () => {
               </div>
             </div>
             <div className="col-lg-6 shop-story-content">
-              <h2 className="section-title">The JAYASTRA Story</h2>
+              <h2 className="section-title">The AVM Story</h2>
               <div className="divider-left"></div>
               <p>
-                Founded in the heart of Andhra Pradesh, <strong>JAYASTRA</strong> began with a simple yet powerful dream: to bring back the lost glory of authentic Indian handlooms. We believe that every piece of clothing tells a story – a story of an artisan's dedicated hours, the rhythm of the loom, and the rich cultural heritage that binds us all.
+                Founded in the heart of Andhra Pradesh, <strong>AVM</strong> began with a simple yet powerful dream: to bring back the lost glory of authentic Indian handlooms. We believe that every piece of clothing tells a story – a story of an artisan's dedicated hours, the rhythm of the loom, and the rich cultural heritage that binds us all.
               </p>
               <p>
                 Specializing exclusively in premium, hand-picked luxury weaves including <strong>sarees, lehengas, dupattas, and ethnic ensembles</strong>, we have become a trusted destination for modern women who value purity, quality, and timeless elegance. Every drape is a testament to the master weavers of India.

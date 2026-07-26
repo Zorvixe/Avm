@@ -187,10 +187,10 @@ ${itemsList}
 
 ${orderDetails.status === 'Delivered' ? '💵 *Earnings have been credited to your wallet balance.*' : ''}
 
-Thank you for being a valued seller on JAYASTRA!
+Thank you for being a valued seller on AVM!
 
 ---
-JAYASTRA Store Support`;
+AVM Store Support`;
     } else {
       // New order notification
       const itemsList = orderDetails.items.map(item => 
@@ -216,7 +216,7 @@ ${orderDetails.customer_phone ? `📞 *Customer Phone:* ${orderDetails.customer_
 Please log in to your vendor dashboard to process this order.
 
 Thank you,
-JAYASTRA Team`;
+AVM Team`;
     }
 
     // Send WhatsApp message - USING SINGLE BUSINESS NUMBER TO SEND TO VENDOR

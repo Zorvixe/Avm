@@ -528,7 +528,7 @@ const ProductDetails = () => {
     const discountText = product.old_price && product.old_price > product.price
       ? `🔥 ${Math.round(((product.old_price - product.price) / product.old_price) * 100)}% OFF! `
       : '';
-    const shareText = `✨ ${product.name} ✨\n💰 Price: ₹${product.price} ${discountText}\n⭐ Rated ${avgRating.toFixed(1)} by ${totalReviews} customers.\n🛍️ Shop now at JAYASTRA – Premium Handloom Sarees.`;
+    const shareText = `✨ ${product.name} ✨\n💰 Price: ₹${product.price} ${discountText}\n⭐ Rated ${avgRating.toFixed(1)} by ${totalReviews} customers.\n🛍️ Shop now at AVM – Premium Handloom Sarees.`;
     const shareData = { title: product.name, text: shareText, url: window.location.href };
 
     if (navigator.share) {

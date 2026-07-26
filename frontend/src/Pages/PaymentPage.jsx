@@ -162,7 +162,7 @@ const PaymentPage = () => {
                 key: razorpayKey,
                 amount: order.amount,
                 currency: order.currency,
-                name: "JAYASTRA",
+                name: "AVM",
                 description: `Purchase of Premium Products`,
                 order_id: order.id,
                 handler: async (response) => {

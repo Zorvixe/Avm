@@ -1,6 +1,13 @@
 import React from "react";
 import { ArrowRight } from "lucide-react";
-import heroBag from "../../assets/hero-bag.jpg";
+import { Carousel } from "react-responsive-carousel";
+import "react-responsive-carousel/lib/styles/carousel.min.css";
+
+import slide1 from "../../assets/gallery-1.jpg";
+import slide2 from "../../assets/gallery-2.jpg";
+import slide3 from "../../assets/gallery-3.jpg";
+import slide4 from "../../assets/product-1.jpg";
+import slide5 from "../../assets/product-2.jpg";
 import "./HeroSection.css";
 
 function HeroSection() {
@@ -78,31 +85,41 @@ function HeroSection() {
 
         <div className="hero-image-wrapper">
 
-          <div className="circle circle-one"></div>
-          <div className="circle circle-two"></div>
 
-          <img
-            src={heroBag}
-            alt="Premium Fertilizer"
-            className="hero-image"
-          />
+  <div className="hero-carousel">
 
-          <div className="badge badge-top">
-            <span>NPK</span>
-            <h6>18-18-18</h6>
-          </div>
+    <Carousel
+      autoPlay
+      infiniteLoop
+      interval={3500}
+      showThumbs={false}
+      showStatus={false}
+      showIndicators={true}
+      showArrows={false}
+      swipeable
+      emulateTouch
+    >
+      <div>
+        <img src={slide1} alt="Slide 1" className="hero-slide-image" />
+      </div>
 
-          <div className="badge badge-left">
-            <span>YIELD</span>
-            <h6>+42%</h6>
-          </div>
+      <div>
+        <img src={slide2} alt="Slide 2" className="hero-slide-image" />
+      </div>
 
-          <div className="badge badge-bottom">
-            <span>CERTIFIED</span>
-            <h6>ISO 9001</h6>
-          </div>
+      <div>
+        <img src={slide3} alt="Slide 3" className="hero-slide-image" />
+      </div>
 
-        </div>
+      <div>
+        <img src={slide4} alt="Slide 4" className="hero-slide-image" />
+      </div>
+
+    </Carousel>
+
+  </div>
+
+</div>
 
       </div>
 

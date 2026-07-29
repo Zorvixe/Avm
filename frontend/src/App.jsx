@@ -22,26 +22,26 @@ import LoginModal from "./components/LoginModal";
 import LoadingSpinner from "./components/LoadingSpinner";
 import MobileBottomNav from "./components/MobileBottomNav";
 
-import OrderSuccessPage from "./pages/OrderSuccessPage/OrderSuccessPage";
-import NotFound from "./pages/NotFound/NotFound"; // ✅ ADD THIS
+import OrderSuccessPage from "./Pages/OrderSuccessPage/OrderSuccessPage";
+import NotFound from "./Pages/NotFound/NotFound"; // ✅ ADD THIS
 
 
 // Lazy load page components for faster initial load
-const Home = lazy(() => import("./pages/Home"));
-const AllProducts = lazy(() => import("./pages/AllProducts"));
-const ProductDetails = lazy(() => import("./pages/ProductDetails"));
-const CartPage = lazy(() => import("./pages/CartPage"));
-const WishlistPage = lazy(() => import("./pages/WishlistPage"));
-const CheckoutPage = lazy(() => import("./pages/CheckoutPage"));
-const Profile = lazy(() => import("./pages/Profile"));
-const OrderDetails = lazy(() => import("./pages/OrderDetails"));
-const PaymentPage = lazy(() => import("./pages/PaymentPage"));
-const About = lazy(() => import("./pages/About"));
-const Contact = lazy(() => import("./pages/Contact"));
-const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
-const ExchangePolicy = lazy(() => import("./pages/ExchangePolicy"));
-const TermsOfService = lazy(() => import("./pages/TermsOfService"));
-const ShippingPolicy = lazy(() => import("./pages/ShippingPolicy"));
+const Home = lazy(() => import("./Pages/Home"));
+const AllProducts = lazy(() => import("./Pages/AllProducts"));
+const ProductDetails = lazy(() => import("./Pages/ProductDetails"));
+const CartPage = lazy(() => import("./Pages/CartPage"));
+const WishlistPage = lazy(() => import("./Pages/WishlistPage"));
+const CheckoutPage = lazy(() => import("./Pages/CheckoutPage"));
+const Profile = lazy(() => import("./Pages/Profile"));
+const OrderDetails = lazy(() => import("./Pages/OrderDetails"));
+const PaymentPage = lazy(() => import("./Pages/PaymentPage"));
+const About = lazy(() => import("./Pages/About"));
+const Contact = lazy(() => import("./Pages/Contact"));
+const PrivacyPolicy = lazy(() => import("./Pages/PrivacyPolicy"));
+const ExchangePolicy = lazy(() => import("./Pages/ExchangePolicy"));
+const TermsOfService = lazy(() => import("./Pages/TermsOfService"));
+const ShippingPolicy = lazy(() => import("./Pages/ShippingPolicy"));
 
 const App = () => {
   return (

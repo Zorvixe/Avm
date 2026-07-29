@@ -1,11 +1,11 @@
 /* src/components/WorkWithUsMarquee.css */
 .work-with-us-marquee {
-  background-color: #8E2139; /* Theme Maroon */
+  background-color: #064e3b; /* Theme Maroon */
   padding: 12px 0;
   overflow: hidden;
   position: relative;
-  border-top: 2px solid #D4AF37;
-  border-bottom: 2px solid #D4AF37;
+  border-top: 2px solid #7dd34d;
+  border-bottom: 2px solid #7dd34d;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   z-index: 10;
 }
@@ -51,7 +51,7 @@
 }
 
 .special-phone {
-  color: #D4AF37;
+  color: #7dd34d;
   font-size: 1.2rem;
   font-weight: 700;
   letter-spacing: 1.5px;
@@ -64,8 +64,8 @@
 }
 
 .special-phone:hover {
-  background: #D4AF37;
-  color: #8E2139;
+  background: #7dd34d;
+  color: #064e3b;
   transform: scale(1.05);
 }
 

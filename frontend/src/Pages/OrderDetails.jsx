@@ -495,16 +495,16 @@ const OrderDetails = () => {
       <div className="order-details-wrapper">
          {/* TAX INVOICE PRINT LAYOUT */}
          <div className="invoice-print-layout">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #8E2139', paddingBottom: '30px', marginBottom: '30px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #064e3b', paddingBottom: '30px', marginBottom: '30px' }}>
                <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-                  <img src="/assets/jayastra_banner.png" alt="AVM" style={{ height: '80px', objectFit: 'contain' }} />
+                  <div style={{ border: '2px solid #16a34a', borderRadius: '50%', width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '24px', color: '#fff', backgroundColor: '#064e3b' }}>AVM</div>
                   <div>
-                     <h1 style={{ margin: 0, fontSize: '28px', letterSpacing: '1px', color: '#8E2139', textTransform: 'uppercase', fontFamily: "'Playfair Display', serif" }}>AVM</h1>
-                     <p style={{ margin: '2px 0 0 0', fontSize: '11px', color: '#555', letterSpacing: '2px', fontWeight: '600' }}>PREMIUM ETHNIC WEAR</p>
-                     <div style={{ marginTop: '10px', fontSize: '11px', color: '#444', lineHeight: '1.4' }}>
-                        <strong>AVM Retails</strong><br />
-                        1-125 Bheemavaram, Telangana<br />
-                        Email: avmagrilifescience@gmail.com
+                     <h1 style={{ margin: 0, fontSize: '26px', letterSpacing: '1px', color: '#064e3b', fontWeight: '800' }}>AVM AGRI LIFE SCIENCE</h1>
+                     <p style={{ margin: '2px 0 0 0', fontSize: '11px', color: '#16a34a', letterSpacing: '1px', fontWeight: '700' }}>AN ISO 9001:2015 CERTIFIED COMPANY</p>
+                     <div style={{ marginTop: '8px', fontSize: '11px', color: '#444', lineHeight: '1.4' }}>
+                        <strong>Company Headquarters:</strong> H.No. 4-57, Injapur, Turkayamjal<br />
+                        Abdullapurmet Mandal, R.R. Dist, Hyderabad, TS - 500 070<br />
+                        MD Phone: +91 9502978646 • Customer Care: +91 7981257228
                      </div>
                   </div>
                </div>
@@ -518,7 +518,7 @@ const OrderDetails = () => {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '40px' }}>
                <div style={{ width: '45%' }}>
-                  <h4 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #ddd', paddingBottom: '5px', color: '#8E2139', textTransform: 'uppercase', fontSize: '14px' }}>Billed To</h4>
+                  <h4 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #ddd', paddingBottom: '5px', color: '#064e3b', textTransform: 'uppercase', fontSize: '14px' }}>Billed To</h4>
                   <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.6', color: '#333' }}>
                      <strong>{order.customer_name}</strong><br />
                      {order.address}<br />
@@ -526,7 +526,7 @@ const OrderDetails = () => {
                   </p>
                </div>
                <div style={{ width: '45%' }}>
-                  <h4 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #ddd', paddingBottom: '5px', color: '#8E2139', textTransform: 'uppercase', fontSize: '14px' }}>Shipped To</h4>
+                  <h4 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #ddd', paddingBottom: '5px', color: '#064e3b', textTransform: 'uppercase', fontSize: '14px' }}>Shipped To</h4>
                   <p style={{ margin: 0, fontSize: '14px', lineHeight: '1.6', color: '#333' }}>
                      <strong>{order.customer_name}</strong><br />
                      {order.address}<br />
@@ -551,8 +551,8 @@ const OrderDetails = () => {
                         <td style={{ textAlign: 'center', padding: '12px 10px', color: '#555' }}>{idx + 1}</td>
                         <td style={{ textAlign: 'left', padding: '12px 10px', fontWeight: '500' }}>{item.name}</td>
                         <td style={{ textAlign: 'center', padding: '12px 10px', color: '#555' }}>{item.quantity}</td>
-                        <td style={{ textAlign: 'right', padding: '12px 10px', color: '#555' }}>₹{parseFloat(item.price).toFixed(2)}</td>
-                        <td style={{ textAlign: 'right', padding: '12px 10px', fontWeight: '600' }}>₹{(item.quantity * parseFloat(item.price)).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', padding: '12px 10px', color: '#555' }}>â‚¹{parseFloat(item.price).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', padding: '12px 10px', fontWeight: '600' }}>â‚¹{(item.quantity * parseFloat(item.price)).toFixed(2)}</td>
                      </tr>
                   ))}
                </tbody>
@@ -562,11 +562,11 @@ const OrderDetails = () => {
                <div style={{ width: '45%' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #eee' }}>
                      <span style={{ color: '#555' }}>Subtotal:</span>
-                     <span>₹{subTotal.toFixed(2)}</span>
+                     <span>â‚¹{subTotal.toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #eee' }}>
                      <span style={{ color: '#555' }}>Discount:</span>
-                     <span style={{ color: '#d32f2f' }}>-₹{discount.toFixed(2)}</span>
+                     <span style={{ color: '#d32f2f' }}>-â‚¹{discount.toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #000' }}>
                      <span style={{ color: '#555' }}>Shipping & Handling:</span>
@@ -574,15 +574,15 @@ const OrderDetails = () => {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '15px 0', backgroundColor: '#f9f9f9', marginTop: '10px', borderRadius: '4px' }}>
                      <strong style={{ fontSize: '18px', paddingLeft: '15px' }}>Grand Total:</strong>
-                     <strong style={{ fontSize: '18px', paddingRight: '15px', color: '#8E2139' }}>₹{parseFloat(order.total_amount).toFixed(2)}</strong>
+                     <strong style={{ fontSize: '18px', paddingRight: '15px', color: '#064e3b' }}>â‚¹{parseFloat(order.total_amount).toFixed(2)}</strong>
                   </div>
                </div>
             </div>
 
             <div style={{ marginTop: '70px', paddingTop: '20px', borderTop: '1px solid #ddd', fontSize: '11px', color: '#666', textAlign: 'center', lineHeight: '1.6' }}>
-               <p style={{ margin: '0 0 5px 0' }}><strong>Policy Note:</strong> Exchange requests must be submitted within 2 days of delivery of the saree., subject to our unboxing video verification protocol.</p>
+               <p style={{ margin: '0 0 5px 0' }}><strong>Policy Note:</strong> Exchange requests must be submitted within 2 days of delivery of the product, subject to our unboxing video verification protocol.</p>
                <p style={{ margin: 0 }}>This is a computer-generated tax invoice and does not require a physical signature.</p>
-               <strong style={{ display: 'block', marginTop: '12px', color: '#8E2139', letterSpacing: '0.5px' }}>THANK YOU FOR CHOOSING AVM</strong>
+               <strong style={{ display: 'block', marginTop: '12px', color: '#064e3b', letterSpacing: '0.5px' }}>THANK YOU FOR CHOOSING AVM AGRI LIFE SCIENCE</strong>
             </div>
          </div>
 
@@ -608,7 +608,7 @@ const OrderDetails = () => {
                            <div className="order-product-info">
                               <h2>{item.name}</h2>
                               <div className="op-price-row">
-                                 <span className="op-price">₹{item.price}</span>
+                                 <span className="op-price">â‚¹{item.price}</span>
                                  <span style={{ fontSize: '12px', color: '#878787' }}>Qty: {item.quantity}</span>
                               </div>
 
@@ -722,15 +722,15 @@ const OrderDetails = () => {
                   <h3>Price Summary</h3>
                   <div className="price-row">
                      <span>Items Subtotal</span>
-                     <span>₹{subTotal}</span>
+                     <span>â‚¹{subTotal}</span>
                   </div>
                   <div className="price-row">
                      <span>Total Discount</span>
-                     <span style={{ color: '#26a541' }}>-₹{discount}</span>
+                     <span style={{ color: '#26a541' }}>-â‚¹{discount}</span>
                   </div>
                   <div className="price-row total-row">
                      <span>Order Total</span>
-                     <span>₹{order.total_amount}</span>
+                     <span>â‚¹{order.total_amount}</span>
                   </div>
 
                   <p style={{ fontSize: '13px', color: '#878787', marginTop: '15px' }}>
@@ -762,7 +762,7 @@ const OrderDetails = () => {
                            <button
                               className="btn-invoice btn-exchange"
                               onClick={() => setShowExchangeModal(true)}
-                              style={{ marginTop: '0', background: '#8E2139', color: 'white', borderColor: '#8E2139' }}
+                              style={{ marginTop: '0', background: '#064e3b', color: 'white', borderColor: '#064e3b' }}
                            >
                               <i className="bi bi-arrow-return-left"></i> Request Exchange
                            </button>

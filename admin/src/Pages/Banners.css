@@ -53,7 +53,7 @@
 }
 
 .sett-tab-btn.active {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
 }
 
@@ -129,7 +129,7 @@
 .sett-input:focus,
 .sett-select:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.1);
 }
 
@@ -218,7 +218,7 @@
 }
 
 input:checked + .sett-slider {
-  background-color: #8E2139;
+  background-color: #064e3b;
 }
 
 input:checked + .sett-slider:before {
@@ -233,7 +233,7 @@ input:checked + .sett-slider:before {
 }
 
 .sett-save-btn {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   padding: 12px 24px;
   border: none;
@@ -383,7 +383,7 @@ input:checked + .sett-slider:before {
 
 .sett-slot-cell {
   font-weight: 600;
-  color: #8E2139;
+  color: #064e3b;
   width: 80px;
 }
 

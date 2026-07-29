@@ -3,7 +3,6 @@ import React, { useState, useEffect, useRef } from "react";
 import axios from '../utils/axiosConfig';
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
-import sarry_logo from "../assets/jayastra_banner.png";
 import login_image from "../assets/login-image.png";
 import "./AdminLogin.css";
 
@@ -300,8 +299,8 @@ function AdminLogin() {
         {/* Left Section: Branding & Illustration */}
         <div className="ad-log-brand-side">
           <div className="ad-log-header">
-            <img src={sarry_logo} className="ad-log-brand-logo" alt="Avm Banner" />
-            <p className="ad-log-powered">Powered by Zorvixe Technologies</p>
+            <div style={{ fontWeight: '800', fontSize: '24px', color: '#064e3b', letterSpacing: '1px' }}>AVM AGRI LIFE SCIENCE</div>
+            <p className="ad-log-powered">An ISO 9001:2015 Certified Company</p>
           </div>
 
           <div className="ad-log-illustration-container">
@@ -313,8 +312,8 @@ function AdminLogin() {
         <div className="ad-log-form-side">
           {/* Welcome Section */}
           <div className="ad-log-welcome-section">
-            <h2 className="ad-log-title">Welcome to AVM</h2>
-            <p className="ad-log-subtitle">Please enter your details to continue</p>
+            <h2 className="ad-log-title">Welcome to AVM Agri Life Science</h2>
+            <p className="ad-log-subtitle">Please enter your admin or vendor credentials to continue</p>
           </div>
 
           {/* Sleek Method Selector */}

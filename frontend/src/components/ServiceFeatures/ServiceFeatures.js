@@ -2,7 +2,7 @@
 import React from "react";
 import "./ServiceFeatures.css";
 
-// Import your images - update these paths to your actual image locations
+// Import images
 import shippingImg from "../../assets/bikes-free-shipping.svg";
 import exchangeImg from "../../assets/bikes-return.svg";
 import supportImg from "../../assets/bikes-24-support.svg";
@@ -12,35 +12,35 @@ const ServiceFeatures = () => {
   const features = [
     {
       id: 1,
-      title: "FREE SHIPPING",
-      description: "Enjoy free shipping on all orders across India, making your shopping experience more affordable, convenient, and hassle-free from start to finish.",
+      title: "FREE & FAST DISPATCH",
+      description: "Enjoy prompt shipping and dispatch across India from our Hyderabad warehousing facilities, making dealer and farmer deliveries reliable and hassle-free.",
       image: shippingImg,
-      alt: "Free Shipping",
-      color: "#8E2139"
+      alt: "Fast Dispatch",
+      color: "#064e3b"
     },
     {
       id: 2,
-      title: "EXCHANGE & RETURN",
-      description: "We offer exchanges within 7 working days only for damaged products. Refunds and returns are not available under any circumstances. Once Order is placed there is no cancellation and refund.",
+      title: "EXCHANGE ASSURANCE",
+      description: "We offer hassle-free exchanges within 2 working days for transit-damaged sealed products subject to unboxing video verification protocol.",
       image: exchangeImg,
-      alt: "Exchange & Return",
-      color: "#D4AF37"
+      alt: "Exchange Assurance",
+      color: "#7dd34d"
     },
     {
       id: 3,
-      title: "CUSTOMER SERVICE",
-      description: "Our customer service is available Monday to Saturday, from 10 AM to 7 PM, ensuring prompt support for all your needs.",
+      title: "CUSTOMER CARE & SUPPORT",
+      description: "Our dedicated agricultural support desk (+91 7981257228) is available Monday to Saturday, from 9 AM to 7 PM, ensuring expert agronomical guidance.",
       image: supportImg,
-      alt: "Customer Service",
-      color: "#8E2139"
+      alt: "Customer Care",
+      color: "#064e3b"
     },
     {
       id: 4,
-      title: "INSTANT PAYMENTS",
-      description: "Receive instant payments securely, ensuring fast transactions, improved cash flow, and a smooth experience for both buyers and sellers every time.",
+      title: "SECURE TRANSACTIONS",
+      description: "Experience 100% secure payment gateways and verified dealer billing, ensuring transparent transactions and reliable billing every time.",
       image: paymentImg,
-      alt: "Instant Payments",
-      color: "#D4AF37"
+      alt: "Secure Transactions",
+      color: "#7dd34d"
     }
   ];
 
@@ -48,10 +48,10 @@ const ServiceFeatures = () => {
     <section className="service-features-section">
       <div className="container">
         <div className="service-features-header">
-          <h2 className="service-features-title">Why Choose Us</h2>
+          <h2 className="service-features-title">Why Choose AVM Agri Life Science</h2>
           <div className="service-features-line"></div>
           <p className="service-features-subtitle">
-            Experience the best of online shopping with our premium services
+            Experience reliable agricultural input supply and dealer services — For Us Farmer is a King 👑
           </p>
         </div>
 

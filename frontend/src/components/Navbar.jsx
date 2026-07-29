@@ -183,10 +183,10 @@ const Navbar = () => {
 
   // Typing animation for placeholder
   const typingTexts = [
-    "Search silk sarees...",
-    "Search wedding sarees...",
-    "Search cotton sarees...",
-    "Search designer sarees..."
+    "Search organic fertilizers...",
+    "Search growth promoters...",
+    "Search crop protection...",
+    "Search humic & fulvic acids..."
   ];
   const [placeholder, setPlaceholder] = useState("");
   const [textIndex, setTextIndex] = useState(0);
@@ -253,9 +253,9 @@ const Navbar = () => {
         {/* TOP BAR */}
         <div className="navbar-top-announcement">
           <div className="social-icons">
-            <a href="https://wa.me/8328590444" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}><i className="bi bi-whatsapp"></i></a>
-            <a href="tel:+918328590444" style={{ color: 'inherit', textDecoration: 'none' }}><i className="bi bi-telephone"></i></a>
-            <a href="https://www.instagram.com/jayastra.in" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}><i className="bi bi-instagram"></i></a>
+            <a href="https://wa.me/919502978646" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}><i className="bi bi-whatsapp"></i></a>
+            <a href="tel:+919502978646" style={{ color: 'inherit', textDecoration: 'none' }}><i className="bi bi-telephone"></i></a>
+            <a href="mailto:avmagrilifescience@gmail.com" style={{ color: 'inherit', textDecoration: 'none' }}><i className="bi bi-envelope"></i></a>
           </div>
           <div className="announcement-text-wrapper">
             {coupons.length > 0 ? (
@@ -264,12 +264,12 @@ const Navbar = () => {
                 {coupons[currentCouponIndex].discount_type === "percentage" ? "%" : "₹"} off on ₹{coupons[currentCouponIndex].min_order_amount}+
               </div>
             ) : (
-              <div className="announcement-text">Welcome to our premium store</div>
+              <div className="announcement-text">Welcome to AVM Agri Life Science — Farmer is a King 👑</div>
             )}
           </div>
 
           <div className="store-locator-text">
-            <a href="https://maps.app.goo.gl/2ZMKquxJ3HGTVXhA9" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
+            <a href="https://www.google.com/maps/search/?api=1&query=Injapur+Turkayamjal+Hyderabad" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
               <i className="bi bi-geo-alt"></i> Location
             </a>
           </div>
@@ -339,7 +339,7 @@ const Navbar = () => {
 
             {/* Logo */}
             <div className="logo-box" onClick={() => navigate("/")}>
-              <img src="/assets/jayastra_banner.png" alt="Logo" className="jayastra-banner-nav" />
+              <img src="/assets/avm_ogo.png" alt="Logo" className="avm-banner-nav" />
             </div>
 
             {/* Right Icons - Only show cart on mobile, all icons on desktop */}

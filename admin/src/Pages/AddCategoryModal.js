@@ -76,7 +76,7 @@ const AddCategoryModal = ({ onClose, onCategoryAdded }) => {
                   name="name"
                   value={form.name}
                   onChange={handleChange}
-                  placeholder="e.g., Electronics, Clothing"
+                  placeholder="e.g., Bio-Fertilizers, Crop Protection"
                   required
                 />
               </div>

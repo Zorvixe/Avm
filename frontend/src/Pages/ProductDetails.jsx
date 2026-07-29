@@ -43,7 +43,7 @@ const StockNotificationModal = ({
   return createPortal(
     <div className="notify-modal-backdrop" onClick={(e) => { e.stopPropagation(); handleClose(); }}>
       <div className="notify-modal small" onClick={e => e.stopPropagation()}>
-        <button className="notify-modal-close" onClick={handleClose}>×</button>
+        <button className="notify-modal-close" onClick={handleClose}>Ã—</button>
 
         {isSuccess ? (
           <div style={{ textAlign: 'center', padding: '30px 10px' }}>
@@ -111,7 +111,7 @@ const ReviewSuccessModal = ({ show, onClose }) => {
   return createPortal(
     <div className="notify-modal-backdrop" onClick={onClose}>
       <div className="review-success-modal" onClick={e => e.stopPropagation()}>
-        <button className="notify-modal-close" onClick={onClose}>×</button>
+        <button className="notify-modal-close" onClick={onClose}>Ã—</button>
         <div className="success-content">
           <i className="bi bi-check-circle-fill"></i>
           <h3>Thank You for Your Feedback!</h3>
@@ -523,12 +523,29 @@ const ProductDetails = () => {
     navigate("/checkout");
   };
 
+  const handleBuyViaWhatsApp = async () => {
+    if (!product) return;
+    try {
+      const res = await axios.get(`${API_URL}/whatsapp/product-url/${product.id || product.uuid}?quantity=${quantity}`);
+      if (res.data && res.data.success && res.data.whatsapp_url) {
+        window.open(res.data.whatsapp_url, '_blank');
+        return;
+      }
+    } catch (err) {
+      console.error("Backend WhatsApp url fetch failed, using fallback:", err);
+    }
+    const phone = product.whatsapp_number || "919502978646";
+    const variantInfo = selectedVariant ? `\n🏷️ *Variant:* ${selectedVariant.variant_name}` : '';
+    const msg = `Hello AVM Agri Life Science,\n\nI want to buy this product via WhatsApp:\n🌾 *Product:* ${product.name}${variantInfo}\n🏷️ *SKU:* ${product.product_code || product.sku || 'N/A'}\n💰 *Price:* ₹${currentPrice}\n📦 *Quantity:* ${quantity}\n🔗 *Link:* ${window.location.origin}/product/${product.uuid || product.id}\n\nPlease guide me with the order process and payment.`;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
   const handleShare = () => {
     if (!product) return;
     const discountText = product.old_price && product.old_price > product.price
       ? `🔥 ${Math.round(((product.old_price - product.price) / product.old_price) * 100)}% OFF! `
       : '';
-    const shareText = `✨ ${product.name} ✨\n💰 Price: ₹${product.price} ${discountText}\n⭐ Rated ${avgRating.toFixed(1)} by ${totalReviews} customers.\n🛍️ Shop now at AVM – Premium Handloom Sarees.`;
+    const shareText = `✨ ${product.name} ✨\n💰 Price: ₹${product.price} ${discountText}\n⭐ Rated ${avgRating.toFixed(1)} by ${totalReviews} customers.\n🌱 Shop now at AVM Agri Life Science - High-Yield Plant Nutrition.`;
     const shareData = { title: product.name, text: shareText, url: window.location.href };
 
     if (navigator.share) {
@@ -753,7 +770,7 @@ const ProductDetails = () => {
                   coupons.map((c) => (
                     <div key={c.id} className="offer-item">
                       <i className="bi bi-gift"></i>
-                      <strong style={{ marginLeft: "5px", marginRight: "5px", color: "#8E2139" }}>{c.code}</strong> -
+                      <strong style={{ marginLeft: "5px", marginRight: "5px", color: "#064e3b" }}>{c.code}</strong> -
                       Get {c.discount_value}{c.discount_type === "percentage" ? "%" : "₹"} off on ₹{c.min_order_amount}
                     </div>
                   ))
@@ -775,6 +792,7 @@ const ProductDetails = () => {
                   <>
                     <button className="cart-btn" onClick={handleAddToCart}><i className="bi bi-bag"></i> Add to Bag</button>
                     <button className="buy-btn" onClick={handleBuyNow}>Buy Now</button>
+                    <button className="whatsapp-buy-btn" onClick={handleBuyViaWhatsApp} title="Buy via WhatsApp"><i className="bi bi-whatsapp"></i>WhatsApp</button>
                   </>
                 )}
               </div>

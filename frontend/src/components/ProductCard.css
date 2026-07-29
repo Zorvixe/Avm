@@ -35,7 +35,7 @@
 .image-wrapper {
   position: relative;
   width: 100%;
-  aspect-ratio: 3 / 4; /* Perfect for 2-column fashion grids */
+  aspect-ratio: 3 / 4; /* Perfect for 2-column product grids */
   overflow: hidden;
   background: #f9f9f9;
   cursor: pointer;
@@ -106,7 +106,7 @@
 }
 
 .wish-btn:hover { transform: scale(1.1); }
-.wish-btn.active { color: #8E2139; }
+.wish-btn.active { color: #064e3b; }
 .wish-btn.active i::before { content: "\F415"; }
 
 /* QUICK VIEW HOVER */
@@ -129,7 +129,7 @@
 }
 
 .product-card:hover .quick-view-overlay { transform: translateY(0); }
-.quick-view-overlay:hover { background: #8E2139; color: #fff; }
+.quick-view-overlay:hover { background: #064e3b; color: #fff; }
 
 /* INFO SECTION */
 .product-info-box {
@@ -162,7 +162,7 @@
 .p-price.current {
   font-size: 1.2rem;
   font-weight: 700;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .p-price.old {
@@ -258,14 +258,14 @@
 
 .notify-me-btn {
   background: #fff;
-  color: #8E2139;
-  border: 1px solid #8E2139;
+  color: #064e3b;
+  border: 1px solid #064e3b;
 }
 
 .notify-me-btn:hover {
-  background: #8E2139;
+  background: #064e3b;
   color: #fff;
-  box-shadow: 0 4px 15px rgba(142, 33, 57, 0.2);
+  box-shadow: 0 4px 15px rgba(6, 78, 59, 0.2);
 }
 
 .notify-me-btn.requested {
@@ -442,7 +442,7 @@
 .notify-modal-header h4 {
   font-family: 'Playfair Display', serif;
   font-size: 1.6rem;
-  color: #8E2139;
+  color: #064e3b;
   margin-bottom: 10px;
 }
 
@@ -488,7 +488,7 @@
 
 .notify-submit-btn {
   width: 100%;
-  background: #8E2139;
+  background: #064e3b;
   color: #fff;
   border: none;
   padding: 16px;

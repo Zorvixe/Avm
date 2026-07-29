@@ -496,7 +496,7 @@ const AddProduct = ({ onClose }) => {
               <input
                 type="text"
                 name="name"
-                placeholder="e.g. Premium Silk Saree"
+                placeholder="e.g. Premium Bio-Fertilizer 5L"
                 value={product.name}
                 onChange={handleChange}
                 required
@@ -959,7 +959,7 @@ const AddProduct = ({ onClose }) => {
                           type="text"
                           name="name"
                           className="add-prod-cate-form-control"
-                          placeholder="e.g. Electronics, Clothing"
+                          placeholder="e.g. Bio-Fertilizers, Crop Protection"
                           value={categoryForm.name}
                           onChange={handleCategoryChange}
                           required

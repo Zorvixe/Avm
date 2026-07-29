@@ -68,7 +68,7 @@
   cursor: pointer; transition: 0.2s; color: #666; font-size: 0.9rem;
 }
 
-.od-custom-file-label:hover { border-color: #8E2139; color: #8E2139; background: #fff5f7; }
+.od-custom-file-label:hover { border-color: #064e3b; color: #064e3b; background: #fff5f7; }
 
 .od-field textarea {
   width: 100%; min-height: 100px; padding: 15px; border: 1px solid #e0e0e0;
@@ -84,8 +84,8 @@
 .od-cancel-btn { flex: 1; border: 1px solid #ddd; background: white; }
 .od-submit-btn {
   flex: 1.5; border: none;
-  background: #8E2139; color: white; font-weight: 700;
-  box-shadow: 0 4px 15px rgba(142,33,57,0.3);
+  background: #064e3b; color: white; font-weight: 700;
+  box-shadow: 0 4px 15px rgba(6,78,59,0.3);
 }
 
 .od-submit-btn:disabled { background: #ccc; box-shadow: none; cursor: not-allowed; }

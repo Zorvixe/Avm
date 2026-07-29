@@ -304,7 +304,7 @@
 }
 
 .prof-btn-submit {
-  background: #8E2139;
+  background: #064e3b;
   color: #ffffff;
   border: none;
 }
@@ -483,7 +483,7 @@
 }
 
 .prof-no-addresses button {
-  background: #8E2139;
+  background: #064e3b;
   color: #ffffff;
   border: none;
   padding: 6px 14px;
@@ -1161,7 +1161,7 @@
   align-items: center;
   justify-content: center;
   font-size: 22px;
-  color: #8E2139;
+  color: #064e3b;
   border: 1px solid var(--notion-border);
   flex-shrink: 0;
 }
@@ -1231,9 +1231,9 @@
 }
 
 .prof-security-btn.primary {
-  background: #8E2139;
+  background: #064e3b;
   color: #ffffff;
-  border-color: #8E2139;
+  border-color: #064e3b;
 }
 
 .prof-security-btn.primary:hover {
@@ -1338,7 +1338,7 @@
 
 .prof-pin-digit:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.15);
 }
 

@@ -6,22 +6,22 @@ const Inventory = () => {
   const [products, setProducts] = useState([
     {
       id: 1,
-      name: "Premium Tent",
-      sku: "TENT-001",
+      name: "Bio-Fertilizer 5L",
+      sku: "BIO-001",
       stock: 25,
       lowStockLimit: 5
     },
     {
       id: 2,
-      name: "Wedding Pavilion",
-      sku: "TENT-002",
+      name: "Organic Growth Promoter 1L",
+      sku: "ORG-002",
       stock: 4,
       lowStockLimit: 5
     },
     {
       id: 3,
-      name: "Luxury Safari Tent",
-      sku: "TENT-003",
+      name: "Soil Health Enhancer 10kg",
+      sku: "SOIL-003",
       stock: 0,
       lowStockLimit: 5
     }

@@ -391,16 +391,44 @@ const ProductCard = ({
                 </button>
               )
             ) : (
-              <button
-                className={`add-to-cart-action`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!token) { setShowLogin(true); return; }
-                  addToCart(product);
-                }}
-              >
-                Add to Bag
-              </button>
+              <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+                <button
+                  className={`add-to-cart-action`}
+                  style={{ flex: 1 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!token) { setShowLogin(true); return; }
+                    addToCart(product);
+                  }}
+                >
+                  Add to Bag
+                </button>
+                <button
+                  className="wa-card-btn"
+                  title="Buy via WhatsApp"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const phone = product.whatsapp_number || "919502978646";
+                    const msg = `Hello AVM Agri Life Science,\n\nI want to buy this product via WhatsApp:\n🌾 *Product:* ${product.name}\n💰 *Price:* ₹${product.discount_price || product.price}\n🔗 *Link:* ${window.location.origin}/product/${product.uuid || product.id}\n\nPlease guide me with the order process and payment.`;
+                    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+                  }}
+                  style={{
+                    background: '#16a34a',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '0 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    fontSize: '1.2rem',
+                    transition: '0.2s'
+                  }}
+                >
+                  <i className="bi bi-whatsapp"></i>
+                </button>
+              </div>
             )}
           </div>
         )}

@@ -47,11 +47,11 @@
 
 .payouts-nav li:hover {
   background: #f7f9fc;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .payouts-nav li.active {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   box-shadow: 0 4px 12px rgba(142, 33, 57, 0.2);
 }
@@ -65,7 +65,7 @@
 
 /* Info Banner */
 .payouts-info-banner {
-  background: #8E2139;
+  background: #064e3b;
   border-radius: 16px;
   padding: 16px 24px;
   margin-bottom: 24px;
@@ -290,9 +290,9 @@
 }
 
 .payouts-stat-tab.active {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
-  border-color: #8E2139;
+  border-color: #064e3b;
 }
 
 .payouts-stat-tab span {
@@ -381,7 +381,7 @@
 
 .payouts-view-summary-link {
   font-size: 13px;
-  color: #8E2139;
+  color: #064e3b;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -396,7 +396,7 @@
 }
 
 .payouts-action-icon:hover {
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .payouts-btn-clear-filters,
@@ -416,15 +416,15 @@
 
 .payouts-btn-blue-outline {
   background: white;
-  border: 1px solid #8E2139;
-  color: #8E2139;
+  border: 1px solid #064e3b;
+  color: #064e3b;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
 .payouts-btn-blue-outline:hover {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
 }
 
@@ -490,7 +490,7 @@
 }
 
 .payouts-text-blue {
-  color: #8E2139;
+  color: #064e3b;
   font-weight: 500;
 }
 
@@ -627,7 +627,7 @@
 }
 
 .payouts-modal-close-large:hover {
-  background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
   transform: rotate(90deg);
   color: #fff;
 }
@@ -652,7 +652,7 @@
 .payouts-balance-card-large {
   display: flex;
   flex-direction: row;
-  background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
   border-radius: 20px;
   padding: 10px;
   text-align: center;
@@ -700,7 +700,7 @@
 
 .payouts-info-item i {
   font-size: 24px;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .payouts-info-item div {
@@ -751,7 +751,7 @@
 }
 
 .payouts-form-section .payouts-form-label i {
-  color: #8E2139;
+  color: #064e3b;
   font-size: 16px;
 }
 
@@ -783,7 +783,7 @@
 
 .payouts-withdrawl-textarea:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.1);
 }
 
@@ -799,7 +799,7 @@
 
 .payouts-amount-input-wrapper-large input:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.1);
 }
 
@@ -824,7 +824,7 @@
 }
 
 .payouts-quick-amount-buttons button:hover {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
 }
 
@@ -879,7 +879,7 @@
 
 .payouts-btn-submit-large {
   padding: 12px 28px;
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   border: none;
   border-radius: 10px;
@@ -1023,7 +1023,7 @@
 .payouts-form-group input:focus,
 .payouts-form-group textarea:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.1);
 }
 
@@ -1057,7 +1057,7 @@
 
 .payouts-btn-submit-payout {
   padding: 8px 20px;
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   border: none;
   border-radius: 8px;
@@ -1102,7 +1102,7 @@
   width: 48px;
   height: 48px;
   border: 3px solid #e9ecef;
-  border-top-color: #8E2139;
+  border-top-color: #064e3b;
   border-radius: 50%;
   animation: payouts-spin 0.8s linear infinite;
 }
@@ -1143,13 +1143,13 @@
 }
 
 .payouts-saved-account-card:hover {
-  border-color: #8E2139;
+  border-color: #064e3b;
   background: #fef2f2;
   transform: translateX(2px);
 }
 
 .payouts-saved-account-card.selected {
-  border-color: #8E2139;
+  border-color: #064e3b;
   background: #fef2f2;
   box-shadow: 0 2px 8px rgba(142, 33, 57, 0.1);
 }
@@ -1162,7 +1162,7 @@
   width: 18px;
   height: 18px;
   cursor: pointer;
-  accent-color: #8E2139;
+  accent-color: #064e3b;
 }
 
 .payouts-account-details {
@@ -1178,7 +1178,7 @@
 }
 
 .payouts-account-bank-name i {
-  color: #8E2139;
+  color: #064e3b;
   font-size: 14px;
 }
 
@@ -1229,7 +1229,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #8E2139;
+  color: #064e3b;
   font-weight: 500;
 }
 
@@ -1914,7 +1914,7 @@
 }
 
 .payouts-invoice-modal-header h3 i {
-  color: #8E2139;
+  color: #064e3b;
   font-size: 20px;
 }
 
@@ -1925,7 +1925,7 @@
 }
 
 .payouts-btn-print {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   border: none;
   padding: 8px 18px;
@@ -1963,7 +1963,7 @@
 .payouts-btn-close-modal:hover {
   background: #e2e8f0;
   transform: rotate(90deg);
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .payouts-invoice-modal-content {
@@ -1982,12 +1982,12 @@
 }
 
 .payouts-invoice-modal-content::-webkit-scrollbar-thumb {
-  background: #8E2139;
+  background: #064e3b;
   border-radius: 10px;
 }
 
 .payouts-btn-view-invoice {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   border: none;
   padding: 6px 14px;
@@ -2121,7 +2121,7 @@
 }
 
 .payouts-transaction-description i {
-  color: #8E2139;
+  color: #064e3b;
   font-size: 18px;
 }
 

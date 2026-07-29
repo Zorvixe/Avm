@@ -15,6 +15,7 @@ import sgMail from '@sendgrid/mail';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import PDFDocument from 'pdfkit';
+import { sendWhatsAppNotification } from './whatsappService.js';
 
 // ================= APP CONFIG =================
 const app = express();
@@ -108,7 +109,7 @@ app.post("/api/webhooks/order-tracking", express.raw({ type: 'application/json' 
   try {
     // Get the webhook secret from database
     const config = await getShiprocketConfig(true);
-    const webhookSecret = config.shiprocket_webhook_secret || process.env.SHIPROCKET_WEBHOOK_SECRET || "JayastraWebhookSecure123";
+    const webhookSecret = config.shiprocket_webhook_secret || process.env.SHIPROCKET_WEBHOOK_SECRET || "AvmWebhookSecure123";
 
     // Get signature from headers - Shiprocket uses 'x-api-key'
     const apiKey = req.headers['x-api-key'];
@@ -119,7 +120,7 @@ app.post("/api/webhooks/order-tracking", express.raw({ type: 'application/json' 
     console.log("Raw body length:", rawBody.length);
 
     // Verify the API key
-    if (webhookSecret && webhookSecret !== "JayastraWebhookSecure123") {
+    if (webhookSecret && webhookSecret !== "AvmWebhookSecure123") {
       if (apiKey !== webhookSecret) {
         console.warn("⚠️ Invalid webhook API key received");
         return res.status(401).json({ success: false, message: "Invalid API key" });
@@ -2074,6 +2075,85 @@ RETURNING *
   }
 });
 
+// ================= VENDOR WHATSAPP SETTINGS =================
+app.get("/api/vendor/whatsapp-settings", verifyToken, async (req, res) => {
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS vendor_whatsapp_settings (
+      id SERIAL PRIMARY KEY,
+      vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+      enabled BOOLEAN DEFAULT true,
+      send_on_new_order BOOLEAN DEFAULT true,
+      send_on_status_update BOOLEAN DEFAULT true,
+      whatsapp_number VARCHAR(20),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    const result = await pool.query(`SELECT * FROM vendor_whatsapp_settings WHERE vendor_id = $1`, [req.user.id]);
+    if (result.rows.length === 0) {
+      const userRes = await pool.query(`SELECT phone FROM users WHERE id = $1`, [req.user.id]);
+      const defaultPhone = userRes.rows[0]?.phone || "";
+      const insertRes = await pool.query(
+        `INSERT INTO vendor_whatsapp_settings (vendor_id, enabled, send_on_new_order, send_on_status_update, whatsapp_number) VALUES ($1, true, true, true, $2) RETURNING *`,
+        [req.user.id, defaultPhone]
+      );
+      return res.json({ success: true, settings: insertRes.rows[0] });
+    }
+    res.json({ success: true, settings: result.rows[0] });
+  } catch (error) {
+    console.error("Error fetching vendor whatsapp settings:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch settings" });
+  }
+});
+
+app.put("/api/vendor/whatsapp-settings", verifyToken, async (req, res) => {
+  try {
+    const { enabled, send_on_new_order, send_on_status_update, whatsapp_number } = req.body;
+    await pool.query(`CREATE TABLE IF NOT EXISTS vendor_whatsapp_settings (
+      id SERIAL PRIMARY KEY,
+      vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+      enabled BOOLEAN DEFAULT true,
+      send_on_new_order BOOLEAN DEFAULT true,
+      send_on_status_update BOOLEAN DEFAULT true,
+      whatsapp_number VARCHAR(20),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    const result = await pool.query(
+      `INSERT INTO vendor_whatsapp_settings (vendor_id, enabled, send_on_new_order, send_on_status_update, whatsapp_number, updated_at)
+       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+       ON CONFLICT (vendor_id) DO UPDATE SET
+         enabled = EXCLUDED.enabled,
+         send_on_new_order = EXCLUDED.send_on_new_order,
+         send_on_status_update = EXCLUDED.send_on_status_update,
+         whatsapp_number = EXCLUDED.whatsapp_number,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [req.user.id, enabled, send_on_new_order, send_on_status_update, whatsapp_number]
+    );
+    res.json({ success: true, settings: result.rows[0] });
+  } catch (error) {
+    console.error("Error updating vendor whatsapp settings:", error);
+    res.status(500).json({ success: false, message: "Failed to update settings" });
+  }
+});
+
+app.post("/api/vendor/whatsapp-test", verifyToken, async (req, res) => {
+  try {
+    const { phone_number, test_message } = req.body;
+    if (!phone_number) return res.status(400).json({ success: false, message: "Phone number is required" });
+    const msg = test_message || "Hello! This is a test notification from AVM Agri Life Science vendor panel.";
+    const sendRes = await sendWhatsAppNotification(phone_number, msg);
+    if (sendRes.success) {
+      res.json({ success: true, message: "Test message sent successfully" });
+    } else {
+      res.status(500).json({ success: false, message: sendRes.error || "Failed to send WhatsApp message" });
+    }
+  } catch (error) {
+    console.error("Error sending test whatsapp:", error);
+    res.status(500).json({ success: false, message: "Failed to send test message" });
+  }
+});
+
 // ================= VENDOR PICKUP ADDRESS =================
 // ================= VENDOR PICKUP ADDRESSES (COMPLETE) =================
 
@@ -3392,11 +3472,33 @@ const attachVariantsToProduct = async (product) => {
   const variants = variantsRes.rows;
   const totalVariantStock = variants.reduce((sum, variant) => sum + Number(variant.stock_quantity || 0), 0);
   const firstVariantPrice = variants.length > 0 ? Number(variants[0].price || 0) : Number(product.price || 0);
+
+  let whatsappNumber = "919502978646";
+  if (product.vendor_id) {
+    try {
+      const waRes = await pool.query(
+        `SELECT whatsapp_number, enabled FROM vendor_whatsapp_settings WHERE vendor_id = $1`,
+        [product.vendor_id]
+      );
+      if (waRes.rows.length > 0 && waRes.rows[0].enabled && waRes.rows[0].whatsapp_number) {
+        whatsappNumber = waRes.rows[0].whatsapp_number.replace(/\D/g, '');
+        if (whatsappNumber.length === 10) whatsappNumber = `91${whatsappNumber}`;
+      } else {
+        const vendorRes = await pool.query(`SELECT phone FROM users WHERE id = $1`, [product.vendor_id]);
+        if (vendorRes.rows.length > 0 && vendorRes.rows[0].phone) {
+          let phone = vendorRes.rows[0].phone.replace(/\D/g, '');
+          if (phone.length === 10) whatsappNumber = `91${phone}`;
+        }
+      }
+    } catch (e) {}
+  }
+
   return {
     ...product,
     variants,
     price: firstVariantPrice || Number(product.price || 0),
-    stock_quantity: variants.length > 0 ? totalVariantStock : Number(product.stock_quantity || 0)
+    stock_quantity: variants.length > 0 ? totalVariantStock : Number(product.stock_quantity || 0),
+    whatsapp_number: whatsappNumber
   };
 };
 
@@ -3495,6 +3597,44 @@ app.get("/api/product/:uuid", async (req, res) => {
     res.json({ success: true, product: { ...productWithVariants, images: images.rows.map(row => row.image_url) } });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to fetch product" });
+  }
+});
+
+// WhatsApp Product Order Routing API
+app.get("/api/whatsapp/product-url/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity = 1 } = req.query;
+    let product = null;
+    if (isNaN(id)) {
+      const resUuid = await pool.query(`SELECT p.*, u.phone AS vendor_phone FROM products p JOIN users u ON p.vendor_id = u.id WHERE p.uuid = $1 OR p.product_code = $1`, [id]);
+      if (resUuid.rows.length > 0) product = resUuid.rows[0];
+    } else {
+      const resId = await pool.query(`SELECT p.*, u.phone AS vendor_phone FROM products p JOIN users u ON p.vendor_id = u.id WHERE p.id = $1`, [parseInt(id)]);
+      if (resId.rows.length > 0) product = resId.rows[0];
+    }
+    if (!product) return res.status(404).json({ success: false, message: "Product not found" });
+
+    let whatsappNumber = "919502978646";
+    try {
+      const waRes = await pool.query(`SELECT whatsapp_number, enabled FROM vendor_whatsapp_settings WHERE vendor_id = $1`, [product.vendor_id]);
+      if (waRes.rows.length > 0 && waRes.rows[0].enabled && waRes.rows[0].whatsapp_number) {
+        whatsappNumber = waRes.rows[0].whatsapp_number.replace(/\D/g, '');
+        if (whatsappNumber.length === 10) whatsappNumber = `91${whatsappNumber}`;
+      } else if (product.vendor_phone) {
+        let phone = product.vendor_phone.replace(/\D/g, '');
+        if (phone.length === 10) whatsappNumber = `91${phone}`;
+      }
+    } catch (e) {}
+
+    const productUrl = `${req.headers.origin || 'https://www.avmagrilifescience.com'}/product/${product.uuid || product.id}`;
+    const message = `Hello AVM Agri Life Science,\n\nI want to buy this product via WhatsApp:\n🌾 *Product:* ${product.name}\n🏷️ *SKU:* ${product.product_code || product.sku || 'N/A'}\n💰 *Price:* ₹${product.discount_price || product.price}\n📦 *Quantity:* ${quantity}\n🔗 *Link:* ${productUrl}\n\nPlease guide me with the order process and payment.`;
+    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+
+    res.json({ success: true, whatsapp_number: whatsappNumber, message, whatsapp_url: whatsappUrl, product: { name: product.name, price: product.discount_price || product.price } });
+  } catch (err) {
+    console.error("Error generating WhatsApp URL:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 

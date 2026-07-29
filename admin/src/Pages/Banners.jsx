@@ -384,7 +384,7 @@ const Banners = () => {
                       name="subtitle"
                       value={banner.subtitle}
                       onChange={handleChange}
-                      placeholder="e.g., FLAT 15% OFF ON ALL SAREES"
+                      placeholder="e.g., FLAT 15% OFF ON ALL BIO-FERTILIZERS"
                       className="sett-input"
                     />
                   </div>

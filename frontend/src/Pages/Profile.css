@@ -1,5 +1,5 @@
 :root {
-  --primary-rose: #8E2139;
+  --primary-rose: #064e3b;
   --primary-hover: #7a1c31;
   --secondary-rose: #b76e79;
   --light-rose: #fdf6f7;
@@ -9,7 +9,7 @@
   --border-color: #e5e5e5;
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.02);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.04);
-  --shadow-hover: 0 6px 20px rgba(142, 33, 57, 0.08);
+  --shadow-hover: 0 6px 20px rgba(6, 78, 59, 0.08);
   --fk-blue: #2874f0;
   --success: #26a541;
   --warning: #ff9f00;
@@ -242,7 +242,7 @@
 
 .profile-form-field input:focus {
   border-color: var(--primary-rose);
-  box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.08);
+  box-shadow: 0 0 0 3px rgba(6, 78, 59, 0.08);
   outline: none;
 }
 
@@ -283,7 +283,7 @@
   border-color: var(--primary-rose);
   background: var(--primary-rose);
   color: white;
-  box-shadow: 0 2px 8px rgba(142, 33, 57, 0.15);
+  box-shadow: 0 2px 8px rgba(6, 78, 59, 0.15);
 }
 
 .profile-save-profile-btn {
@@ -298,12 +298,12 @@
   cursor: pointer;
   transition: all 0.3s ease;
   margin-top: 6px;
-  box-shadow: 0 2px 8px rgba(142, 33, 57, 0.15);
+  box-shadow: 0 2px 8px rgba(6, 78, 59, 0.15);
 }
 
 .profile-save-profile-btn:hover {
   background: var(--primary-hover);
-  box-shadow: 0 4px 12px rgba(142, 33, 57, 0.2);
+  box-shadow: 0 4px 12px rgba(6, 78, 59, 0.2);
   transform: translateY(-1px);
 }
 

@@ -1,5 +1,5 @@
 .footer-custom {
-  background-color: #651824f4; /* Rich maroon background */
+  background-color: #064e3b; /* Rich maroon background */
   color: #ffffff;
   padding: 60px 0 40px;
   font-family: 'Inter', sans-serif;
@@ -44,7 +44,7 @@
 }
 
 .footer-heading {
-  color: #d1a551; /* Golden color as seen in the reference */
+  color: #7dd34d; /* Golden color as seen in the reference */
   font-size: 1.1rem;
   font-weight: 600;
   margin-bottom: 25px;
@@ -71,7 +71,7 @@
 
 .footer-links span:hover {
   opacity: 1;
-  color: #d1a551;
+  color: #7dd34d;
 }
 
 .footer-contact-list {
@@ -184,7 +184,7 @@
 }
 
 .developer-credit a {
-  color: #d1a551;
+  color: #7dd34d;
   text-decoration: none;
   font-weight: 500;
   transition: opacity 0.2s ease;

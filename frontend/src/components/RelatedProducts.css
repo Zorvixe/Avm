@@ -165,7 +165,7 @@
 }
 
 .related-item .add-to-cart-btn:hover {
-  background: #8E2139;
+  background: #064e3b;
 }
 
 /* Out of stock button */
@@ -202,11 +202,11 @@
 }
 
 .nav-btn:hover {
-  background: #8E2139;
+  background: #064e3b;
   color: #fff;
-  border-color: #8E2139;
+  border-color: #064e3b;
   transform: scale(1.05);
-  box-shadow: 0 6px 15px rgba(142, 33, 57, 0.2);
+  box-shadow: 0 6px 15px rgba(6, 78, 59, 0.2);
 }
 
 .nav-btn i {

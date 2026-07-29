@@ -260,6 +260,20 @@ const CartPage = () => {
             >
               {cartItems.length === 0 ? "Cart is Empty" : "Place Order"}
             </button>
+            {cartItems.length > 0 && (
+              <button
+                className="checkout-btn w-100"
+                style={{ background: '#16a34a', border: 'none', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                onClick={() => {
+                  const phone = "919502978646";
+                  const itemList = cartItems.map((item, idx) => `${idx + 1}. *${item.name}* (Qty: ${item.qty}) - ₹${item.price * item.qty}`).join('\n');
+                  const msg = `Hello AVM Agri Life Science,\n\nI want to place an order for the items in my cart via WhatsApp:\n\n${itemList}\n\n💰 *Total Amount:* ₹${totalPrice}\n\nPlease guide me with the payment and delivery process.`;
+                  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+                }}
+              >
+                <i className="bi bi-whatsapp"></i> Order Cart via WhatsApp
+              </button>
+            )}
           </div>
         </div>
       </div>

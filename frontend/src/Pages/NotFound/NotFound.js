@@ -64,7 +64,7 @@ const NotFound = () => {
             {/* Soft background glows */}
             <circle cx="250" cy="175" r="120" fill="url(#glow)" opacity="0.15" />
             <circle cx="90" cy="90" r="8" fill="#6366F1" opacity="0.3" className="float-slow" />
-            <circle cx="410" cy="260" r="12" fill="#8E2139" opacity="0.2" className="float-fast" />
+            <circle cx="410" cy="260" r="12" fill="#064e3b" opacity="0.2" className="float-fast" />
             <circle cx="380" cy="70" r="6" fill="#10B981" opacity="0.4" />
             
             {/* Subtle "404" shadow text */}
@@ -75,20 +75,20 @@ const NotFound = () => {
               <ellipse cx="250" cy="245" rx="80" ry="12" fill="#E2E8F0" />
               
               {/* Outer dashed ring */}
-              <circle cx="250" cy="155" r="45" stroke="#8E2139" strokeWidth="5" fill="white" strokeLinecap="round" strokeDasharray="10 6" className="spin-slow" />
+              <circle cx="250" cy="155" r="45" stroke="#064e3b" strokeWidth="5" fill="white" strokeLinecap="round" strokeDasharray="10 6" className="spin-slow" />
               <circle cx="250" cy="155" r="35" fill="#EEF2FF" />
               
               {/* Central question mark symbol */}
-              <text x="250" y="170" fontFamily="system-ui, sans-serif" fontSize="42" fontWeight="bold" fill="#8E2139" textAnchor="middle">?</text>
+              <text x="250" y="170" fontFamily="system-ui, sans-serif" fontSize="42" fontWeight="bold" fill="#064e3b" textAnchor="middle">?</text>
               
-              <path d="M250 200V240" stroke="#8E2139" strokeWidth="6" strokeLinecap="round" />
-              <path d="M230 240H270" stroke="#8E2139" strokeWidth="6" strokeLinecap="round" />
+              <path d="M250 200V240" stroke="#064e3b" strokeWidth="6" strokeLinecap="round" />
+              <path d="M230 240H270" stroke="#064e3b" strokeWidth="6" strokeLinecap="round" />
             </g>
 
             <defs>
               <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(250 175) rotate(90) scale(120)">
-                <stop offset="0%" stopColor="#8E2139" />
-                <stop offset="100%" stopColor="#8E2139" stopOpacity="0" />
+                <stop offset="0%" stopColor="#064e3b" />
+                <stop offset="100%" stopColor="#064e3b" stopOpacity="0" />
               </radialGradient>
             </defs>
           </svg>
@@ -98,7 +98,7 @@ const NotFound = () => {
         <div className="content-box">
           <h1 className="error-title">Page not found</h1>
           <p className="error-description">
-            We can’t seem to find the page you’re looking for. It might have been moved, or the link may be broken.
+            We canâ€™t seem to find the page youâ€™re looking for. It might have been moved, or the link may be broken.
           </p>
           
           {/* Actions */}

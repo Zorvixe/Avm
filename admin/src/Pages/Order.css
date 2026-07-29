@@ -919,7 +919,7 @@
 .address-edit-modal .form-group input:focus,
 .address-edit-modal .form-group textarea:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.1);
 }
 
@@ -949,7 +949,7 @@
 
 .address-edit-modal .btn-save {
   padding: 10px 24px;
-  background: #8E2139;
+  background: #064e3b;
   border: none;
   border-radius: 8px;
   color: white;
@@ -1086,7 +1086,7 @@
 .address-edit-modal .form-group input:focus,
 .address-edit-modal .form-group textarea:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.1);
 }
 
@@ -1123,7 +1123,7 @@
 
 .address-edit-modal .btn-save {
   padding: 10px 24px;
-  background: #8E2139;
+  background: #064e3b;
   border: none;
   border-radius: 8px;
   color: white;
@@ -1359,12 +1359,12 @@
 
 .pickup-location-option:hover {
   background: #f8fafc;
-  border-color: #8E2139;
+  border-color: #064e3b;
 }
 
 .pickup-location-option input[type="radio"] {
   margin-top: 4px;
-  accent-color: #8E2139;
+  accent-color: #064e3b;
 }
 
 .pickup-location-details {
@@ -1387,7 +1387,7 @@
 .pickup-contact {
   margin-top: 5px !important;
   font-size: 11px !important;
-  color: #8E2139 !important;
+  color: #064e3b !important;
 }
 
 .no-pickup-locations {
@@ -1456,7 +1456,7 @@
 }
 
 .pickup-location-option.selected {
-  border-color: #8E2139;
+  border-color: #064e3b;
   background: #fef2f2;
 }
 
@@ -1476,7 +1476,7 @@
 }
 
 .search-input-wrapper:focus-within {
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 2px rgba(142, 33, 57, 0.1);
 }
 
@@ -1546,12 +1546,12 @@
 
 .pickup-location-option:hover {
   background: #f8fafc;
-  border-color: #8E2139;
+  border-color: #064e3b;
 }
 
 .pickup-location-option input[type="radio"] {
   margin-top: 4px;
-  accent-color: #8E2139;
+  accent-color: #064e3b;
 }
 
 .pickup-location-details {
@@ -1603,8 +1603,8 @@
 }
 
 .view-details-btn:hover {
-  background: #8E2139;
-  border-color: #8E2139;
+  background: #064e3b;
+  border-color: #064e3b;
   color: white;
   transform: scale(1.05);
 }
@@ -1833,7 +1833,7 @@
 
 .location-dropdown:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 2px rgba(142, 33, 57, 0.1);
 }
 
@@ -1853,7 +1853,7 @@
 }
 
 .pickup-location-card.selected {
-  border-color: #8E2139;
+  border-color: #064e3b;
   background: #fef2f2;
   box-shadow: 0 2px 8px rgba(142, 33, 57, 0.1);
 }
@@ -1930,7 +1930,7 @@
 }
 
 .view-details-btn:hover {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   transform: scale(1.05);
 }
@@ -1940,7 +1940,7 @@
   width: 14px;
   height: 14px;
   border: 2px solid #e2e8f0;
-  border-top-color: #8E2139;
+  border-top-color: #064e3b;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
   display: inline-block;
@@ -1967,8 +1967,8 @@
 
 .notion-refresh-btn-pickup:hover:not(:disabled) {
   background: #eeeeee;
-  border-color: #8E2139;
-  color: #8E2139;
+  border-color: #064e3b;
+  color: #064e3b;
 }
 
 .notion-refresh-btn-pickup:disabled {
@@ -2208,7 +2208,7 @@
 .step-number {
   font-size: 10px;
   font-weight: 600;
-  color: #8E2139;
+  color: #064e3b;
   background: #fef2f2;
   padding: 2px 8px;
   border-radius: 12px;
@@ -2466,7 +2466,7 @@
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background-color: #8E2139;
+  background-color: #064e3b;
 }
 
 .toggle-switch input:checked + .toggle-slider::before {
@@ -2503,7 +2503,7 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #8E2139;
+  background: #064e3b;
   cursor: pointer;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
@@ -2512,7 +2512,7 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #8E2139;
+  background: #064e3b;
   cursor: pointer;
   border: none;
 }
@@ -2541,11 +2541,11 @@
 
 .test-sound-btn i {
   font-size: 18px;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .order-modal-order-id-span{
-  color: #8E2139;
+  color: #064e3b;
 }
 
 /* ===== REMOVE OLD SOUND TOGGLE STYLES (if any) ===== */

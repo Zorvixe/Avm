@@ -508,7 +508,7 @@ const Categories = () => {
                           type="text"
                           name="name"
                           className="cate-form-control"
-                          placeholder="e.g. Electronics, Clothing"
+                          placeholder="e.g. Bio-Fertilizers, Crop Protection"
                           value={form.name}
                           onChange={handleChange}
                           required

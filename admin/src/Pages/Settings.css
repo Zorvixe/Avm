@@ -42,7 +42,7 @@
 }
 
 .settings-section-title i {
-  color: #8E2139;
+  color: #064e3b;
 }
 
 /* Form Group */
@@ -71,7 +71,7 @@
 
 .settings-input:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.1);
 }
 
@@ -145,7 +145,7 @@
 
 /* Save Button */
 .settings-save-btn {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   padding: 12px 24px;
   border: none;
@@ -230,7 +230,7 @@
   width: 50px;
   height: 50px;
   border: 4px solid #e5e7eb;
-  border-top-color: #8E2139;
+  border-top-color: #064e3b;
   border-radius: 50%;
   animation: settings-spin 1s linear infinite;
 }
@@ -315,7 +315,7 @@
   }
 
   .settings-input:focus {
-    border-color: #8E2139;
+    border-color: #064e3b;
   }
 
   .settings-help-text {
@@ -355,7 +355,7 @@
 .settings-input:focus-visible,
 .settings-save-btn:focus-visible,
 .settings-reset-btn:focus-visible {
-  outline: 2px solid #8E2139;
+  outline: 2px solid #064e3b;
   outline-offset: 2px;
 }
 

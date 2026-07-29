@@ -13,7 +13,7 @@
   left: 0;
   right: 0;
   height: 4px;
-  background: linear-gradient(90deg, #8E2139, #D4AF37, #8E2139);
+  background: linear-gradient(90deg, #064e3b, #7dd34d, #064e3b);
 }
 
 .categories-scroll-header {
@@ -24,7 +24,7 @@
 .categories-scroll-title {
   font-size: 2.2rem;
   font-weight: 600;
-  color: #8E2139;
+  color: #064e3b;
   margin-bottom: 6px;
   position: relative;
   display: inline-block;
@@ -33,7 +33,7 @@
 .categories-scroll-line {
   width: 70px;
   height: 3px;
-  background: linear-gradient(90deg, #8E2139, #D4AF37);
+  background: linear-gradient(90deg, #064e3b, #7dd34d);
   margin: 10px auto;
   border-radius: 2px;
 }
@@ -50,7 +50,7 @@
   padding: 10px 0;
 }
 
-/* ===== CONTAINER – ALWAYS A SINGLE HORIZONTAL LINE ===== */
+/* ===== CONTAINER â€“ ALWAYS A SINGLE HORIZONTAL LINE ===== */
 .categories-scroll-container {
   display: flex;
   flex-wrap: nowrap;      /* Never wrap to next line */
@@ -75,7 +75,7 @@
   flex-wrap: nowrap;      /* ensure no wrap even when centered */
 }
 
-/* ===== CATEGORY ITEM – PREVENT SHRINKING ===== */
+/* ===== CATEGORY ITEM â€“ PREVENT SHRINKING ===== */
 .category-item {
   flex-shrink: 0;         /* prevent item from shrinking */
   text-align: center;
@@ -89,8 +89,8 @@
 }
 
 .category-item:hover .category-circle {
-  box-shadow: 0 12px 30px rgba(142, 33, 57, 0.3);
-  border-color: #D4AF37;
+  box-shadow: 0 12px 30px rgba(6, 78, 59, 0.3);
+  border-color: #7dd34d;
 }
 
 .category-circle {
@@ -99,7 +99,7 @@
   border-radius: 50%;
   overflow: hidden;
   margin: 0 auto 15px;
-  border: 3px solid #8E2139;
+  border: 3px solid #064e3b;
   background: white;
   transition: all 0.3s ease;
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
@@ -124,7 +124,7 @@
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #f5f5f5, #e0e0e0);
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .category-placeholder i {
@@ -141,7 +141,7 @@
 }
 
 .category-item:hover .category-name {
-  color: #8E2139;
+  color: #064e3b;
 }
 
 /* ===== SCROLL BUTTONS ===== */
@@ -153,8 +153,8 @@
   height: 45px;
   border-radius: 50%;
   background: white;
-  border: 2px solid #8E2139;
-  color: #8E2139;
+  border: 2px solid #064e3b;
+  color: #064e3b;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -165,10 +165,10 @@
 }
 
 .scroll-btn:hover {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   transform: translateY(-50%) scale(1.1);
-  box-shadow: 0 4px 15px rgba(142, 33, 57, 0.3);
+  box-shadow: 0 4px 15px rgba(6, 78, 59, 0.3);
 }
 
 .scroll-btn:active {

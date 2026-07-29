@@ -38,7 +38,7 @@ services:
       - DATABASE_URL=postgresql://evolution:evolution123@postgres:5432/evolution
       - REDIS_URI=redis://redis:6379
       - CACHE_REDIS_URI=redis://redis:6379
-      - AUTHENTICATION_API_KEY=JAYASTRA_SECRET_KEY_2026
+      - AUTHENTICATION_API_KEY=AVM_SECRET_KEY_2026
       - GLOBAL_SEND_IDLE=true
     volumes:
       - evolution_instances:/evolution/instances

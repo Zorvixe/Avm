@@ -2,7 +2,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
 
 :root {
-    --return-primary: #8E2139;
+    --return-primary: #064e3b;
     --return-primary-dark: #6b192b;
     --return-primary-light: #fceaea;
     --return-success: #10b981;
@@ -665,7 +665,7 @@
 
 .vendor-tag i {
     font-size: 9px;
-    color: #8E2139;
+    color: #064e3b;
 }
 
 .return-status-info {

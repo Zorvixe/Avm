@@ -1,7 +1,7 @@
 /* ================= ALL PRODUCTS PAGE (PREMIUM REDESIGN) ================= */
 :root {
-  --saree-maroon: #8E2139;
-  --saree-gold: #D4AF37;
+  --avm-green: #064e3b;
+  --avm-gold: #7dd34d;
   --text-dark: #1a1a1a;
   --text-muted: #666;
   --bg-light: #fdfdfd;
@@ -56,7 +56,7 @@
   left: 0;
   width: 30px;
   height: 2px;
-  background: var(--saree-maroon);
+  background: var(--avm-green);
 }
 
 /* Categories List */
@@ -80,18 +80,18 @@
   content: '';
   width: 0;
   height: 1px;
-  background: var(--saree-maroon);
+  background: var(--avm-green);
   transition: 0.3s ease;
 }
 
-.category-list li:hover { color: var(--saree-maroon); padding-left: 5px; }
-.category-list li.active { color: var(--saree-maroon); font-weight: 600; }
+.category-list li:hover { color: var(--avm-green); padding-left: 5px; }
+.category-list li.active { color: var(--avm-green); font-weight: 600; }
 .category-list li.active::before { width: 15px; }
 
 /* Price Slider */
 .price-range-slider {
   width: 100%;
-  accent-color: var(--saree-maroon);
+  accent-color: var(--avm-green);
   cursor: pointer;
 }
 
@@ -136,14 +136,14 @@
 }
 
 .color-pill:hover {
-  border-color: var(--saree-maroon);
+  border-color: var(--avm-green);
   background: #fffafa;
 }
 
 .color-pill.active {
-  background: var(--saree-maroon);
-  border-color: var(--saree-maroon);
-  box-shadow: 0 4px 12px rgba(142, 33, 57, 0.2);
+  background: var(--avm-green);
+  border-color: var(--avm-green);
+  box-shadow: 0 4px 12px rgba(6, 78, 59, 0.2);
 }
 
 .color-pill.active .color-name {

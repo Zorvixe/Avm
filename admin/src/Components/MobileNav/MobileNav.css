@@ -41,7 +41,7 @@
 }
 
 .mobile-nav-item.active {
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .mobile-nav-item i {
@@ -62,7 +62,7 @@
 .fab-button {
   width: 56px;
   height: 56px;
-  background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
   border: none;
   border-radius: 28px;
   display: flex;

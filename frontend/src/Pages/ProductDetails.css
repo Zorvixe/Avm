@@ -6,8 +6,8 @@
 
 /* ================= COLOR PALETTE ================= */
 :root {
-  --maroon: #8E2139;
-  --gold: #D4AF37;
+  --maroon: #064e3b;
+  --gold: #7dd34d;
   --bg-color: #FAFAFA;
   --text-main: #2D2D2D;
   --text-muted: #666666;
@@ -84,7 +84,7 @@
   background: var(--maroon);
   color: #fff !important;
   transform: scale(1.1);
-  box-shadow: 0 8px 20px rgba(142, 33, 57, 0.2);
+  box-shadow: 0 8px 20px rgba(6, 78, 59, 0.2);
 }
 
 .main-slider-wrapper {
@@ -247,7 +247,7 @@
 .thumb-wrapper.active {
   opacity: 1;
   border-color: var(--maroon);
-  box-shadow: 0 4px 12px rgba(142, 33, 57, 0.15);
+  box-shadow: 0 4px 12px rgba(6, 78, 59, 0.15);
   transform: scale(1.05);
 }
 
@@ -485,9 +485,9 @@
 }
 
 .variant-chip.active {
-  background: #8E2139;
+  background: #064e3b;
   color: #fff;
-  border-color: #8E2139;
+  border-color: #064e3b;
 }
 
 .qty-selector {
@@ -548,7 +548,8 @@
 }
 
 .cart-btn,
-.buy-btn {
+.buy-btn,
+.whatsapp-buy-btn {
   flex: 1;
   padding: 18px;
   border: none;
@@ -588,6 +589,11 @@
   color: #fff;
 }
 
+.whatsapp-buy-btn {
+  background: #16a34a;
+  color: #fff;
+}
+
 .cart-btn:hover:not(.out-of-stock) {
   background: #000;
   transform: translateY(-3px);
@@ -597,7 +603,13 @@
 .buy-btn:hover:not(.disabled) {
   background: #7a1d2f;
   transform: translateY(-3px);
-  box-shadow: 0 5px 15px rgba(142, 33, 57, 0.3);
+  box-shadow: 0 5px 15px rgba(6, 78, 59, 0.3);
+}
+
+.whatsapp-buy-btn:hover {
+  background: #15803d;
+  transform: translateY(-3px);
+  box-shadow: 0 5px 15px rgba(22, 163, 74, 0.4);
 }
 
 .notify-me-btn.detail {
@@ -622,7 +634,7 @@
 .notify-me-btn.detail:hover {
   background: var(--maroon);
   color: #fff;
-  box-shadow: 0 8px 25px rgba(142, 33, 57, 0.25);
+  box-shadow: 0 8px 25px rgba(6, 78, 59, 0.25);
   transform: translateY(-3px);
 }
 
@@ -1374,7 +1386,8 @@
   }
 
   .cart-btn,
-  .buy-btn {
+  .buy-btn,
+  .whatsapp-buy-btn {
     flex: 1;
     font-size: 0.85rem;
     height: 48px;
@@ -1469,9 +1482,10 @@
   }
 
   .cart-btn,
-  .buy-btn {
+  .buy-btn,
+  .whatsapp-buy-btn {
     padding: 12px;
-    font-size: 0.9rem;
+    font-size: 0.8rem;
   }
 
   .product-page-wrapper {

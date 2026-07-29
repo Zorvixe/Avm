@@ -66,16 +66,16 @@
 }
 
 .step.completed .step-circle {
-    background: #8E2139;
+    background: #064e3b;
 }
 
 .step.active .step-circle {
-    background: #8E2139;
-    ring: 4px solid rgba(142, 33, 57, 0.2);
+    background: #064e3b;
+    ring: 4px solid rgba(6, 78, 59, 0.2);
 }
 
 .step.active .step-label {
-    color: #8E2139;
+    color: #064e3b;
     font-weight: 600;
 }
 
@@ -91,7 +91,7 @@
 
 .stepper-progress {
     height: 100%;
-    background: #8E2139;
+    background: #064e3b;
     width: 100%;
     /* Fully completed up to payment */
     transition: 0.5s;
@@ -123,7 +123,7 @@
 }
 
 .payment-section-card .section-header {
-    background: #8E2139;
+    background: #064e3b;
     color: #fff;
     padding: 12px 16px;
     display: flex;
@@ -133,7 +133,7 @@
 
 .payment-section-card .section-header .num {
     background: #fff;
-    color: #8E2139;
+    color: #064e3b;
     width: 20px;
     height: 20px;
     display: flex;
@@ -187,7 +187,7 @@
 }
 
 .method-item.selected .radio-circle {
-    border-color: #8E2139;
+    border-color: #064e3b;
 }
 
 .method-item.selected .radio-circle::after {
@@ -195,7 +195,7 @@
     position: absolute;
     width: 10px;
     height: 10px;
-    background: #8E2139;
+    background: #064e3b;
     border-radius: 50%;
     top: 2px;
     left: 2px;
@@ -216,7 +216,7 @@
 }
 
 .method-title i {
-    color: #8E2139;
+    color: #064e3b;
     font-size: 18px;
 }
 
@@ -471,7 +471,7 @@
 }
 
 .btn-orders-flip {
-    background: #8E2139;
+    background: #064e3b;
     color: #fff;
     padding: 12px 30px;
     border: none;

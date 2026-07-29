@@ -2,8 +2,8 @@ import axios from 'axios';
 
 // Evolution API configuration - SINGLE INSTANCE for all vendors
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'JAYASTRA_SECRET_KEY_2026';
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'jayastra_business';
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'AVM_SECRET_KEY_2026';
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'avm_business';
 
 // Send WhatsApp message to ANY phone number using your single business instance
 const sendWhatsAppViaEvolution = async (toNumber, message) => {

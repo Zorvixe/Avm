@@ -16,7 +16,7 @@
 .policy-page h1 {
   font-family: 'Playfair Display', serif;
   font-size: 3rem;
-  color: #6a1421; /* Theme maroon */
+  color: #064e3b; /* Theme maroon */
   margin-bottom: 5px;
   text-align: center;
 }
@@ -31,7 +31,7 @@
 .policy-page h2 {
   font-family: 'Playfair Display', serif;
   font-size: 1.6rem;
-  color: #6a1421;
+  color: #064e3b;
   margin: 40px 0 20px;
 }
 

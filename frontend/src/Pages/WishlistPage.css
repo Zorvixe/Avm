@@ -16,7 +16,7 @@
 .wishlist-image img {
   width: 100%;
   height: auto;
-  aspect-ratio: 3/4; /* Maintains luxury apparel proportions perfectly on all screens */
+  aspect-ratio: 3/4; /* Maintains product card proportions perfectly on all screens */
   object-fit: cover;
   cursor: pointer;
 }

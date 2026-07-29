@@ -22,7 +22,7 @@ const PaymentPage = () => {
     const [settings, setSettings] = useState({ online_payment_discount: 0, cod_fee: 0 });
     const [razorpayKey, setRazorpayKey] = useState(null);
 
-    // ✅ Add this line
+    // âœ… Add this line
     const [currentStep, setCurrentStep] = useState(4);
 
     const token = localStorage.getItem("token");
@@ -218,7 +218,7 @@ const PaymentPage = () => {
                     contact: orderDetails.phone
                 },
                 theme: {
-                    color: "#8E2139"
+                    color: "#064e3b"
                 }
             };
 
@@ -293,7 +293,7 @@ const PaymentPage = () => {
                                     <div className="method-subtitle">Powered by Razorpay</div>
                                     {settings.online_payment_discount > 0 && (
                                         <div className="text-success fw-bold" style={{ fontSize: '0.85rem' }}>
-                                            Applied: ₹{settings.online_payment_discount} Online Discount
+                                            Applied: â‚¹{settings.online_payment_discount} Online Discount
                                         </div>
                                     )}
                                     {paymentMethod === 'UPI' && (
@@ -303,7 +303,7 @@ const PaymentPage = () => {
                                                 disabled={isPlacingOrder}
                                                 onClick={handlePlaceOrder}
                                             >
-                                                {isPlacingOrder ? "PROCESSING..." : `PAY ₹${finalPayable} & PLACE ORDER`}
+                                                {isPlacingOrder ? "PROCESSING..." : `PAY â‚¹${finalPayable} & PLACE ORDER`}
                                             </button>
                                         </div>
                                     )}
@@ -323,7 +323,7 @@ const PaymentPage = () => {
                                     <div className="method-subtitle">Visa, Mastercard, RuPay & more</div>
                                     {settings.online_payment_discount > 0 && (
                                         <div className="text-success fw-bold" style={{ fontSize: '0.85rem' }}>
-                                            Applied: ₹{settings.online_payment_discount} Online Discount
+                                            Applied: â‚¹{settings.online_payment_discount} Online Discount
                                         </div>
                                     )}
                                     {paymentMethod === 'CARD' && (
@@ -333,7 +333,7 @@ const PaymentPage = () => {
                                                 disabled={isPlacingOrder}
                                                 onClick={handlePlaceOrder}
                                             >
-                                                {isPlacingOrder ? "PROCESSING..." : `PAY ₹${finalPayable} & PLACE ORDER`}
+                                                {isPlacingOrder ? "PROCESSING..." : `PAY â‚¹${finalPayable} & PLACE ORDER`}
                                             </button>
                                         </div>
                                     )}
@@ -353,7 +353,7 @@ const PaymentPage = () => {
                                     <div className="method-subtitle">All major Indian banks supported</div>
                                     {settings.online_payment_discount > 0 && (
                                         <div className="text-success fw-bold" style={{ fontSize: '0.85rem' }}>
-                                            Applied: ₹{settings.online_payment_discount} Online Discount
+                                            Applied: â‚¹{settings.online_payment_discount} Online Discount
                                         </div>
                                     )}
                                     {paymentMethod === 'NETBANKING' && (
@@ -363,7 +363,7 @@ const PaymentPage = () => {
                                                 disabled={isPlacingOrder}
                                                 onClick={handlePlaceOrder}
                                             >
-                                                {isPlacingOrder ? "PROCESSING..." : `PAY ₹${finalPayable} & PLACE ORDER`}
+                                                {isPlacingOrder ? "PROCESSING..." : `PAY â‚¹${finalPayable} & PLACE ORDER`}
                                             </button>
                                         </div>
                                     )}
@@ -383,7 +383,7 @@ const PaymentPage = () => {
                                     <div className="method-subtitle">Pay when you receive the package</div>
                                     {settings.cod_fee > 0 && (
                                         <div className="text-danger fw-bold" style={{ fontSize: '0.85rem' }}>
-                                            +₹{settings.cod_fee} COD Handling Fee
+                                            +â‚¹{settings.cod_fee} COD Handling Fee
                                         </div>
                                     )}
                                     {paymentMethod === 'COD' && (
@@ -393,7 +393,7 @@ const PaymentPage = () => {
                                                 disabled={isPlacingOrder}
                                                 onClick={handlePlaceOrder}
                                             >
-                                                {isPlacingOrder ? "PLACING ORDER..." : `CONFIRM ORDER (₹${finalPayable})`}
+                                                {isPlacingOrder ? "PLACING ORDER..." : `CONFIRM ORDER (â‚¹${finalPayable})`}
                                             </button>
                                         </div>
                                     )}
@@ -410,11 +410,11 @@ const PaymentPage = () => {
                         <div className="price-body">
                             <div className="price-row">
                                 <span>Price ({(orderDetails.items || orderDetails.cartItems)?.length || 0} items)</span>
-                                <span>₹{(Number(orderDetails.total_amount) + Number(orderDetails.discount)).toFixed(2)}</span>
+                                <span>â‚¹{(Number(orderDetails.total_amount) + Number(orderDetails.discount)).toFixed(2)}</span>
                             </div>
                             <div className="price-row discount">
                                 <span>Coupon Discount</span>
-                                <span className="val">-₹{orderDetails.discount}</span>
+                                <span className="val">-â‚¹{orderDetails.discount}</span>
                             </div>
 
                             {/* Payment specific adjustments */}
@@ -422,14 +422,14 @@ const PaymentPage = () => {
                                 settings.cod_fee > 0 && (
                                     <div className="price-row">
                                         <span>COD Fee</span>
-                                        <span className="val">+₹{settings.cod_fee}</span>
+                                        <span className="val">+â‚¹{settings.cod_fee}</span>
                                     </div>
                                 )
                             ) : (
                                 settings.online_payment_discount > 0 && (
                                     <div className="price-row text-success fw-bold">
                                         <span>Online Payment Discount</span>
-                                        <span className="val">-₹{settings.online_payment_discount}</span>
+                                        <span className="val">-â‚¹{settings.online_payment_discount}</span>
                                     </div>
                                 )
                             )}
@@ -441,18 +441,18 @@ const PaymentPage = () => {
                             <div className="price-total">
                                 <div className="price-row mb-0">
                                     <strong>Amount Payable</strong>
-                                    <strong className="fs-5">₹{finalPayable}</strong>
+                                    <strong className="fs-5">â‚¹{finalPayable}</strong>
                                 </div>
                             </div>
 
                             {paymentMethod !== 'COD' && settings.online_payment_discount > 0 ? (
                                 <div className="savings-hint text-success">
-                                    Applied: Online Payment Discount ₹{settings.online_payment_discount}
+                                    Applied: Online Payment Discount â‚¹{settings.online_payment_discount}
                                 </div>
                             ) : (
                                 (orderDetails.discount > 0) && (
                                     <div className="savings-hint">
-                                        Your total savings on this order ₹{orderDetails.discount}
+                                        Your total savings on this order â‚¹{orderDetails.discount}
                                     </div>
                                 )
                             )}
@@ -465,14 +465,14 @@ const PaymentPage = () => {
             <div className="mobile-checkout-footer d-lg-none">
                 <div className="price-info">
                     <span className="label">Amount Payable</span>
-                    <span className="val">₹{finalPayable}</span>
+                    <span className="val">â‚¹{finalPayable}</span>
                 </div>
                 <button
                     className="btn-footer-continue"
                     onClick={handlePlaceOrder}
                     disabled={isPlacingOrder}
                 >
-                    {isPlacingOrder ? "PROCESSING..." : `PAY ₹${finalPayable}`}
+                    {isPlacingOrder ? "PROCESSING..." : `PAY â‚¹${finalPayable}`}
                 </button>
             </div>
         </div>

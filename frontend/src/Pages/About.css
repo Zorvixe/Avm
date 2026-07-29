@@ -39,14 +39,14 @@
 .section-title {
   font-family: 'Playfair Display', serif;
   font-size: 2.8rem;
-  color: #6a1421;
+  color: #064e3b;
   margin-bottom: 20px;
 }
 
 .divider-left {
   width: 60px;
   height: 3px;
-  background-color: #d1a551;
+  background-color: #7dd34d;
   margin-bottom: 30px;
 }
 
@@ -87,7 +87,7 @@
 
 .commitment-card i {
   font-size: 2.5rem;
-  color: #d1a551;
+  color: #7dd34d;
   margin-bottom: 20px;
 }
 
@@ -125,7 +125,7 @@
 
 .blog-excerpt { font-size: 0.95rem; color: #666; line-height: 1.6; margin-bottom: 20px; }
 
-.read-more-btn { background: transparent; border: none; color: #6a1421; font-weight: 700; text-transform: uppercase; font-size: 0.85rem; letter-spacing: 1px; cursor: pointer; padding: 0; }
+.read-more-btn { background: transparent; border: none; color: #064e3b; font-weight: 700; text-transform: uppercase; font-size: 0.85rem; letter-spacing: 1px; cursor: pointer; padding: 0; }
 
 .read-more-btn i { transition: transform 0.3s; margin-left: 5px; }
 

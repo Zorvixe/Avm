@@ -197,7 +197,7 @@ const VendorWhatsAppSettings = () => {
           font-size: 12px;
         }
         .save-settings-btn {
-          background: #8E2139;
+          background: #064e3b;
           color: white;
           border: none;
           padding: 10px 20px;

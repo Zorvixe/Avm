@@ -46,14 +46,14 @@
 
 .toggle-btn:hover {
   background-color: #f3f4f6;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .page-title {
   padding-right: 10px;
   font-weight: 700;
   font-size: 1.5rem;
-  background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -85,7 +85,7 @@
 
 
 .wallet-icon {
-  background: #8E2139;
+  background: #064e3b;
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -137,7 +137,7 @@
 }
 
 .store-toggle-btn {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   border: none;
   padding: 8px 14px;
@@ -187,7 +187,7 @@
 }
 
 .wallet-refresh-btn:hover {
-  color: #8E2139;
+  color: #064e3b;
   background: none;
   transform: rotate(180deg);
 }
@@ -242,7 +242,7 @@
 
 .topbar-icon:hover {
   background-color: #f3f4f6;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .notification-badge {
@@ -318,11 +318,11 @@
 }
 
 .notif-header h6 i {
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .unread-count-badge {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   padding: 2px 8px;
   border-radius: 12px;
@@ -351,7 +351,7 @@
 
 .notif-actions button:hover {
   background-color: #e5e7eb;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .notif-list {
@@ -391,13 +391,13 @@
 
 .notif-item.unread {
   background: #fff9f9;
-  border-left: 3px solid #8E2139;
+  border-left: 3px solid #064e3b;
 }
 
 .notif-dot {
   width: 8px;
   height: 8px;
-  background: #8E2139;
+  background: #064e3b;
   border-radius: 50%;
   margin-top: 6px;
   flex-shrink: 0;
@@ -432,7 +432,7 @@
   border-top: 1px solid #e5e7eb;
   font-size: 13px;
   font-weight: 600;
-  color: #8E2139;
+  color: #064e3b;
   cursor: pointer;
   transition: all 0.2s;
   display: flex;
@@ -469,7 +469,7 @@
 
 .profile-avatar {
   font-size: 1.5rem;
-  color: #8E2139;
+  color: #064e3b;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -527,7 +527,7 @@
 
 .dropdown-avatar {
   font-size: 3rem;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .dropdown-user-info {
@@ -544,7 +544,7 @@
 .dropdown-user-name {
   font-weight: 700;
   font-size: 15px;
-  color: #8E2139;
+  color: #064e3b;
   margin-bottom: 4px;
 }
 
@@ -579,7 +579,7 @@
 }
 
 .dropdown-store-switch.active {
-  background: #8E2139;
+  background: #064e3b;
 }
 
 .dropdown-store-switch:disabled {
@@ -635,7 +635,7 @@
 }
 
 .dropdown-item:hover i {
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .logout-item {
@@ -777,7 +777,7 @@
   width: 20px;
   height: 20px;
   border: 2px solid rgba(142, 33, 57, 0.2);
-  border-top-color: #8E2139;
+  border-top-color: #064e3b;
   border-radius: 50%;
   animation: mini-spin 0.6s linear infinite;
   display: inline-block;
@@ -825,7 +825,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
   color: white;
 }
 
@@ -863,7 +863,7 @@
 .mobile-wallet-icon {
   width: 70px;
   height: 70px;
-  background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -896,7 +896,7 @@
   border-radius: 30px;
   font-size: 14px;
   font-weight: 500;
-  color: #8E2139;
+  color: #064e3b;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -924,7 +924,7 @@
   max-width: calc(100vw - 32px);
   background: #ffffff;
   border: 1px solid #f5c2d2;
-  border-left: 4px solid #8E2139;
+  border-left: 4px solid #064e3b;
   border-radius: 10px;
   box-shadow: 0 16px 36px rgba(15, 23, 42, 0.18);
   padding: 16px;
@@ -952,7 +952,7 @@
 
 .store-warning-close:hover {
   background: #f1f5f9;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .store-warning-icon {
@@ -960,7 +960,7 @@
   height: 38px;
   border-radius: 50%;
   background: #fff1f2;
-  color: #8E2139;
+  color: #064e3b;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -986,7 +986,7 @@
   width: 100%;
   border: none;
   border-radius: 8px;
-  background: #8E2139;
+  background: #064e3b;
   color: #ffffff;
   padding: 10px 14px;
   font-size: 13px;

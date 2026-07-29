@@ -21,7 +21,7 @@
   border-radius: 16px;
   padding: 0;
   position: relative;
-  box-shadow: 0 25px 80px rgba(142, 33, 57, 0.15);
+  box-shadow: 0 25px 80px rgba(6, 78, 59, 0.15);
   animation: q-scaleIn 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
   overflow: hidden;
   display: flex;
@@ -55,8 +55,8 @@
   justify-content: center;
   align-items: center;
   text-align: center;
-  background: url('../Pages/light_bg.png') center/cover no-repeat #FCF8F4;
-  border-left: 1px solid rgba(142, 33, 57, 0.1);
+  background: url('../pages/light_bg.png') center/cover no-repeat #FCF8F4;
+  border-left: 1px solid rgba(6, 78, 59, 0.1);
   position: relative;
 }
 
@@ -68,7 +68,7 @@
   left: 0;
   width: 100%;
   height: 5px;
-  background: linear-gradient(90deg, #8E2139, #d4a373);
+  background: linear-gradient(90deg, #064e3b, #d4a373);
 }
 
 .quickview-details h4 {
@@ -83,7 +83,7 @@
 .quickview-details .price {
   font-size: 1.6rem;
   font-weight: 700;
-  color: #8E2139;
+  color: #064e3b;
   margin-bottom: 2px;
 }
 
@@ -102,7 +102,7 @@
   width: fit-content;
   margin-bottom: 30px;
   overflow: hidden;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.02);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.02);
 }
 
 .quantity-box button {
@@ -112,7 +112,7 @@
   background: transparent;
   font-size: 1.4rem;
   font-weight: 500;
-  color: #8E2139;
+  color: #064e3b;
   cursor: pointer;
   transition: background 0.2s;
 }
@@ -129,7 +129,7 @@
 }
 
 .quickview-details .add-cart-btn {
-  background: #8E2139;
+  background: #064e3b;
   color: #fff;
   border: none;
   padding: 16px 30px;
@@ -142,14 +142,14 @@
   transition: all 0.3s ease;
   width: 100%;
   margin-bottom: 20px;
-  box-shadow: 0 8px 20px rgba(142, 33, 57, 0.25);
+  box-shadow: 0 8px 20px rgba(6, 78, 59, 0.25);
   display: block;
 }
 
 .quickview-details .add-cart-btn:hover {
   background: #611414;
   transform: translateY(-2px);
-  box-shadow: 0 10px 25px rgba(142, 33, 57, 0.35);
+  box-shadow: 0 10px 25px rgba(6, 78, 59, 0.35);
 }
 
 .quantity-box.disabled {
@@ -176,7 +176,7 @@
 
 .view-details-link {
   font-size: 0.9rem;
-  color: #8E2139;
+  color: #064e3b;
   font-weight: 600;
   text-decoration: underline;
   cursor: pointer;
@@ -210,19 +210,31 @@
 }
 
 .close-btn:hover {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
-  border-color: #8E2139;
+  border-color: #064e3b;
 }
 
 @keyframes q-fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes q-scaleIn {
-  from { transform: scale(0.92); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
+  from {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 /* Responsive QuickView */
@@ -234,34 +246,35 @@
     border-radius: 16px;
     overflow-y: auto;
   }
-  
+
   .quickview-content {
     flex-direction: row;
     display: flex;
   }
-  
+
   .quickview-image {
     width: 100%;
-    height: 320px; /* Locked shorter height to prevent pushing buttons off screen */
+    height: 320px;
+    /* Locked shorter height to prevent pushing buttons off screen */
   }
-  
+
   .quickview-image img {
     height: 100%;
     width: 100%;
     object-fit: cover;
   }
-  
+
   .quickview-details {
     padding: 25px 20px;
     align-items: center;
     text-align: center;
     border-left: none;
   }
-  
+
   .quickview-details::before {
     height: 4px;
   }
-  
+
   .quickview-details h4 {
     font-size: 1.5rem;
     margin-bottom: 8px;
@@ -274,11 +287,11 @@
   .quickview-details small {
     margin-bottom: 20px;
   }
-  
+
   .view-details-link {
     margin: 10px 0;
   }
-  
+
   .quantity-box {
     margin: 0 auto 15px;
   }

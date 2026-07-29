@@ -63,7 +63,7 @@
 
 /* Primary Add Button */
 .cate-add-main-btn {
-  background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
   color: white;
   padding: 12px 24px;
   border-radius: 12px;
@@ -675,12 +675,12 @@
 }
 
 .cate-btn-primary {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
 }
 
 .cate-btn-primary:hover {
-  background: #7a1c30;
+  background: #16a34a;
   box-shadow: 0 4px 6px rgba(79, 70, 229, 0.3);
 }
 
@@ -985,7 +985,7 @@
 
 .slide-content i {
   font-size: 1.2rem;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .slide-content input,

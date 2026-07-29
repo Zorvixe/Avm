@@ -22,7 +22,7 @@
 }
 
 .add-main-btn {
-  background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
   color: white;
   padding: 12px 24px;
   border-radius: 12px;
@@ -131,8 +131,8 @@
 
 .edit-btn:hover {
   background: #fdfafb;
-  border-color: #8E2139;
-  color: #8E2139;
+  border-color: #064e3b;
+  color: #064e3b;
 }
 
 .delete-btn {
@@ -197,7 +197,7 @@
 .form-group input:focus,
 .form-group textarea:focus {
   outline: none;
-  border-color: #8E2139;
+  border-color: #064e3b;
   box-shadow: 0 0 0 3px rgba(142, 33, 57, 0.1);
 }
 
@@ -254,7 +254,7 @@
 }
 
 .toggle-switch.active {
-  background: #8E2139;
+  background: #064e3b;
 }
 
 .toggle-circle {
@@ -285,7 +285,7 @@
 }
 
 .highlight-btn {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   padding: 12px 30px;
   border-radius: 12px;

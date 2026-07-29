@@ -7,7 +7,7 @@
   flex-direction: column;
   margin: 0 auto;
   box-sizing: border-box;
-  background: linear-gradient(#8E2139, #fff)
+  background: linear-gradient(#064e3b, #fff)
 }
 
 .dash-banner {
@@ -116,7 +116,7 @@
 }
 
 .dash-view-all-link {
-  color: #8E2139;
+  color: #064e3b;
   /* Mockup Dark Green Link */
   font-size: 0.8rem;
   font-weight: 800;
@@ -204,7 +204,7 @@
 }
 
 .dash-pay-now-btn {
-  background: #8E2139;
+  background: #064e3b;
   /* Dark forest green button from image */
   color: #ffffff;
   border: none;
@@ -430,7 +430,7 @@
 }
 
 .dash-promo-btn {
-  background: #8E2139;
+  background: #064e3b;
   color: #ffffff;
   border: none;
   border-radius: 20px;
@@ -543,7 +543,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .dash-stat-label {
@@ -659,7 +659,7 @@
   width: 32px;
   height: 32px;
   border: 3px solid #f1f5f9;
-  border-top-color: #8E2139;
+  border-top-color: #064e3b;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -710,7 +710,7 @@
 .dash-profile-initials {
   font-size: 28px;
   font-weight: 700;
-  color: #8E2139;
+  color: #064e3b;
   text-transform: uppercase;
 }
 
@@ -727,7 +727,7 @@
 
 .dash-profile-role {
   font-size: 0.75rem;
-  color: #8E2139;
+  color: #064e3b;
   font-weight: 600;
   background: #eaf6f3;
   display: inline-block;
@@ -799,7 +799,7 @@
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #8E2139);
+  background: linear-gradient(135deg, #064e3b);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -861,7 +861,7 @@
 
 .dash-dropdown-item i {
   font-size: 1rem;
-  color: #8E2139;
+  color: #064e3b;
   width: 20px;
 }
 
@@ -1044,7 +1044,7 @@
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #8E2139 !important;
+  background: #064e3b !important;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.2);
   transform: translateX(0);
   transition: transform 0.2s ease;

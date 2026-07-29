@@ -2,10 +2,12 @@
 import React, { useState } from "react";
 import { NavLink } from "react-router-dom";
 import "./Sidebar.css";
-import sarry_logo from "../assets/jayastra_banner.png";
-import sarry_favicon from "../assets/jayastra-brown-favicon.png";
 
+import sarry_logo from "../assets/avm_ogo.png";
+import sarry_favicon from "../assets/avm_favicon.png";
 export const SidebarContext = React.createContext();
+
+
 
 const Sidebar = ({ isCollapsed, toggleSidebar }) => {
   const [hoveredItem, setHoveredItem] = useState(null);

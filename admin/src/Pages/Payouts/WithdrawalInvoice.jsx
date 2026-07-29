@@ -1,8 +1,6 @@
 import React, { useRef } from 'react';
 import './WithdrawalInvoice.css';
 
-import logo from '../../assets/jayastra_banner.png';
-
 const WithdrawalInvoice = ({ payout, onClose }) => {
   const printRef = useRef();
 
@@ -160,12 +158,12 @@ const WithdrawalInvoice = ({ payout, onClose }) => {
             <div className="invoice-header">
               <div className="company-info">
                 <div className="company-logo">
-                  <img src={logo} alt="Avm Logo" className="logo-img-invoice" />
+                  <div style={{ fontWeight: '800', fontSize: '22px', color: '#064e3b', letterSpacing: '1px' }}>AVM AGRI LIFE SCIENCE</div>
                 </div>
                 <div className="company-address">
-                  <p><i className="bi bi-geo-alt"></i> 2-62 K Bollavaram</p>
-                  <p>Andhra Pradesh - 518508, India</p>
-                  <p><i className="bi bi-envelope"></i> avmagrilisfescience@gmail.com </p>
+                  <p><i className="bi bi-geo-alt"></i> H.No. 4-57, Injapur, Turkayamjal</p>
+                  <p>Hyderabad, TS - 500 070, India</p>
+                  <p><i className="bi bi-envelope"></i> avmagrilifescience@gmail.com</p>
                 </div>
               </div>
               <div className="invoice-title-area">
@@ -421,7 +419,7 @@ const getPrintStyles = () => `
   .company-address i {
     font-size: 10px;
     margin-right: 4px;
-    color: #8E2139;
+    color: #064e3b;
   }
   
   .invoice-title-area {
@@ -429,7 +427,7 @@ const getPrintStyles = () => `
   }
   
   .payment-badge {
-    background: #8E2139;
+    background: #064e3b;
     color: white;
     padding: 6px 18px;
     border-radius: 30px;
@@ -447,7 +445,7 @@ const getPrintStyles = () => `
   
   .divider {
     height: 2px;
-    background: linear-gradient(90deg, #8E2139, #e0e0e0);
+    background: linear-gradient(90deg, #064e3b, #e0e0e0);
     margin: 20px 0;
   }
   
@@ -505,7 +503,7 @@ const getPrintStyles = () => `
   }
   
   .details-card h4 {
-    color: #8E2139;
+    color: #064e3b;
     font-size: 14px;
     margin-bottom: 12px;
     display: flex;
@@ -545,7 +543,7 @@ const getPrintStyles = () => `
   }
   
   .amount-card {
-    background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+    background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
     border-radius: 16px;
     padding: 24px;
     text-align: center;

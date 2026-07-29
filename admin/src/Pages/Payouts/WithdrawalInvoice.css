@@ -54,7 +54,7 @@
 }
 
 .invoice-modal-header h3 i {
-  color: #8E2139;
+  color: #064e3b;
   font-size: 20px;
 }
 
@@ -65,7 +65,7 @@
 }
 
 .btn-print {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   border: none;
   padding: 8px 18px;
@@ -103,7 +103,7 @@
 .btn-close-modal:hover {
   background: #e2e8f0;
   transform: rotate(90deg);
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .invoice-modal-content {
@@ -123,7 +123,7 @@
 }
 
 .invoice-modal-content::-webkit-scrollbar-thumb {
-  background: #8E2139;
+  background: #064e3b;
   border-radius: 10px;
 }
 
@@ -173,7 +173,7 @@ margin: 0px;
 }
 
 .company-logo h1 {
-  color: #8E2139;
+  color: #064e3b;
   font-size: 28px;
   margin: 0;
   letter-spacing: 2px;
@@ -200,7 +200,7 @@ margin: 0px;
 .company-address i {
   font-size: 10px;
   margin-right: 4px;
-  color: #8E2139;
+  color: #064e3b;
 }
 
 .invoice-title-area {
@@ -208,7 +208,7 @@ margin: 0px;
 }
 
 .payment-badge {
-  background: #8E2139;
+  background: #064e3b;
   color: white;
   padding: 6px 18px;
   border-radius: 30px;
@@ -227,7 +227,7 @@ margin: 0px;
 
 .divider {
   height: 2px;
-  background: linear-gradient(90deg, #8E2139, #e0e0e0);
+  background: linear-gradient(90deg, #064e3b, #e0e0e0);
   margin: 20px 0;
 }
 
@@ -287,7 +287,7 @@ margin: 0px;
 }
 
 .details-card h4 {
-  color: #8E2139;
+  color: #064e3b;
   font-size: 14px;
   margin-top: 0;
   margin-bottom: 12px;
@@ -328,7 +328,7 @@ margin: 0px;
 }
 
 .amount-card {
-  background: linear-gradient(135deg, #8E2139 0%, #6b192b 100%);
+  background: linear-gradient(135deg, #064e3b 0%, #6b192b 100%);
   border-radius: 16px;
   padding: 24px;
   text-align: center;

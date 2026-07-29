@@ -1,6 +1,6 @@
 :root {
-  --maroon: #8E2139;
-  --gold: #D4AF37;
+  --maroon: #064e3b;
+  --gold: #7dd34d;
 }
 
 .order-details-wrapper {
@@ -264,7 +264,7 @@
 .btn-invoice {
   width: 100%;
   padding: 16px;
-  background: #8E2139;
+  background: #064e3b;
   border: none;
   border-radius: 8px;
   color: white;
@@ -277,12 +277,12 @@
   justify-content: center;
   align-items: center;
   gap: 10px;
-  box-shadow: 0 4px 12px rgba(142, 33, 57, 0.2);
+  box-shadow: 0 4px 12px rgba(6, 78, 59, 0.2);
 }
 
 .btn-invoice:hover {
   background: #7a1c31;
-  box-shadow: 0 6px 16px rgba(142, 33, 57, 0.3);
+  box-shadow: 0 6px 16px rgba(6, 78, 59, 0.3);
   transform: translateY(-2px);
 }
 
@@ -400,7 +400,7 @@
 
 .exchange-badge.active {
     background: #fff5f6;
-    color: #8E2139;
+    color: #064e3b;
     border-color: #ffdae0;
 }
 
@@ -474,7 +474,7 @@
 }
 
 .review-modal-header {
-    background: #8E2139;
+    background: #064e3b;
     padding: 20px;
     color: white;
     display: flex;
@@ -554,9 +554,9 @@
 }
 
 .modal-textarea:focus {
-    border-color: #8E2139;
+    border-color: #064e3b;
     background: white;
-    box-shadow: 0 0 0 4px rgba(142, 33, 57, 0.05);
+    box-shadow: 0 0 0 4px rgba(6, 78, 59, 0.05);
 }
 
 .modal-actions {
@@ -575,7 +575,7 @@
 }
 
 .btn-modal-submit {
-    background: #8E2139;
+    background: #064e3b;
     color: white;
     border: none;
 }
@@ -946,13 +946,13 @@
 
 .btn-submit {
     padding: 14px;
-    background: #8E2139; /* Use hex directly to ensure it works */
+    background: #064e3b; /* Use hex directly to ensure it works */
     color: #fff;
     border: none;
     border-radius: 10px;
     font-weight: 700;
     cursor: pointer;
-    box-shadow: 0 4px 12px rgba(142, 33, 57, 0.2);
+    box-shadow: 0 4px 12px rgba(6, 78, 59, 0.2);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1149,7 +1149,7 @@
 }
 
 .back-to-order-btn:hover {
-   color: #8E2139;
+   color: #064e3b;
 }
 
 .live-tracking-body {
@@ -1381,7 +1381,7 @@
 }
 
 .btn-go-back {
-   background: #8E2139;
+   background: #064e3b;
    color: #fff;
    border: none;
 }
@@ -1422,7 +1422,7 @@
 }
 
 .btn-track-live {
-   background: #8E2139;
+   background: #064e3b;
    color: #fff;
    border: none;
    padding: 10px 20px;

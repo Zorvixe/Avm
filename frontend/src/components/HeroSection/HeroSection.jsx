@@ -2,12 +2,21 @@ import React from "react";
 import { ArrowRight } from "lucide-react";
 import { Carousel } from "react-responsive-carousel";
 import "react-responsive-carousel/lib/styles/carousel.min.css";
+import slide1 from "../../assets/product-1.jpg";
+import slide2 from "../../assets/product-2.jpg";
+import slide3 from "../../assets/product-3.jpg";
+import slide4 from "../../assets/product-4.jpg";
+import slide5 from "../../assets/product-5.jpg";
+import slide6 from "../../assets/product-6.jpg";
 
-import slide1 from "../../assets/gallery-1.jpg";
-import slide2 from "../../assets/gallery-2.jpg";
-import slide3 from "../../assets/gallery-3.jpg";
-import slide4 from "../../assets/product-1.jpg";
-import slide5 from "../../assets/product-2.jpg";
+const slides = [
+  slide1,
+  slide2,
+  slide3,
+  slide4,
+  slide5,
+  slide6,
+];
 import "./HeroSection.css";
 
 function HeroSection() {
@@ -89,33 +98,26 @@ function HeroSection() {
   <div className="hero-carousel">
 
     <Carousel
-      autoPlay
-      infiniteLoop
-      interval={3500}
-      showThumbs={false}
-      showStatus={false}
-      showIndicators={true}
-      showArrows={false}
-      swipeable
-      emulateTouch
-    >
-      <div>
-        <img src={slide1} alt="Slide 1" className="hero-slide-image" />
-      </div>
-
-      <div>
-        <img src={slide2} alt="Slide 2" className="hero-slide-image" />
-      </div>
-
-      <div>
-        <img src={slide3} alt="Slide 3" className="hero-slide-image" />
-      </div>
-
-      <div>
-        <img src={slide4} alt="Slide 4" className="hero-slide-image" />
-      </div>
-
-    </Carousel>
+  autoPlay
+  infiniteLoop
+  interval={3500}
+  showThumbs={false}
+  showStatus={false}
+  showIndicators
+  showArrows={false}
+  swipeable
+  emulateTouch
+>
+  {slides.map((image, index) => (
+    <div key={index}>
+      <img
+        src={image}
+        alt={`Slide ${index + 1}`}
+        className="hero-slide-image"
+      />
+    </div>
+  ))}
+</Carousel>
 
   </div>
 

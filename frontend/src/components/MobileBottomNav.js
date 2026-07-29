@@ -6,15 +6,16 @@ import { useUser } from '../context/UserContext';
 const MobileBottomNav = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { cartItems, setIsCartOpen } = useCart();
+  const { cartItems, setIsCartOpen, isCartOpen } = useCart();
   const { user, setShowLogin } = useUser();
   const token = localStorage.getItem("token");
 
   const navItems = [
-    { icon: "bi bi-shop", label: "Shop", path: "/all-products", action: null },
-    { icon: "bi bi-heart", label: "Wishlist", path: "/wishlist", requiresAuth: true },
-    { icon: "bi bi-bag", label: "Cart", path: null, action: "cart", hasBadge: true },
-    { icon: "bi bi-person", label: "Account", path: "/profile", requiresAuth: true, hasInitials: true }
+    { icon: "bi bi-shop", activeIcon: "bi bi-shop", label: "Shop", path: "/all-products", action: null },
+    { icon: "bi bi-heart", activeIcon: "bi bi-heart-fill", label: "Wishlist", path: "/wishlist", requiresAuth: true },
+    { icon: "bi bi-house", activeIcon: "bi bi-house-fill", label: "Home", path: "/", action: null },
+    { icon: "bi bi-bag", activeIcon: "bi bi-bag-fill", label: "Cart", path: null, action: "cart", hasBadge: true },
+    { icon: "bi bi-person", activeIcon: "bi bi-person-fill", label: "Account", path: "/profile", requiresAuth: true, hasInitials: true }
   ];
 
   const handleNavigation = (item) => {
@@ -40,7 +41,7 @@ const MobileBottomNav = () => {
       return location.pathname === item.path;
     }
     if (item.action === "cart") {
-      return false;
+      return isCartOpen;
     }
     return false;
   };
@@ -86,7 +87,7 @@ const MobileBottomNav = () => {
                 {userInitials}
               </div>
             ) : (
-              <i className={item.icon}></i>
+              <i className={isActive(item) ? (item.activeIcon || item.icon) : item.icon}></i>
             )}
             {item.hasBadge && cartItemCount > 0 && (
               <span className="mobile-cart-badge">{cartItemCount}</span>

@@ -482,3 +482,52 @@ transform:translateX(-50%);
     line-height:1;
 }
 
+
+/* =======================================
+   PRODUCT CARD HOME STYLES
+======================================= */
+
+.products-container .product-card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.product-card-body-home {
+    padding: 35px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.product-card-body-home h2 {
+    font-family: "Cormorant Garamond", serif;
+    font-size: 32px;
+    color: #143d2d;
+    margin-bottom: 25px;
+    font-weight: 500;
+    line-height: 1.2;
+}
+
+.product-card-body-home .product-footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    margin-top: auto;
+}
+
+@media(max-width:768px){
+    .product-card-body-home {
+        padding: 25px;
+    }
+    .product-card-body-home h2 {
+        font-size: 34px;
+    }
+    .product-card-body-home .product-footer {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 20px;
+    }
+}
+

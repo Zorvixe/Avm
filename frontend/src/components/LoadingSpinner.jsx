@@ -6,7 +6,7 @@ const LoadingSpinner = ({ fullPage = true }) => {
     <div className={fullPage ? "load-init-overlay" : "load-init-container"}>
       <div className="load-init-luxury-spinner">
         <div className="load-init-spinner-circle"></div>
-        <div className="load-init-spinner-logo-text">J</div>
+        <div className="load-init-spinner-logo-text">AVM</div>
       </div>
     </div>
   );

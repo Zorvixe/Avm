@@ -47,39 +47,28 @@
 @media (max-width:992px){
 
     .stats-section{
-        flex-wrap:wrap;
-        justify-content:center;
-        gap:60px;
-        padding:70px 40px;
-    }
-
-    .stat-card{
-        width:45%;
+        gap:20px;
+        padding:50px 20px;
     }
 
     .stat-card h2{
-        font-size:58px;
+        font-size:36px;
     }
 }
 
 @media (max-width:768px){
 
     .stats-section{
-        flex-direction:column;
-        padding:60px 20px;
-        gap:50px;
-    }
-
-    .stat-card{
-        width:100%;
+        padding:40px 10px;
+        gap:10px;
     }
 
     .stat-card h2{
-        font-size:50px;
+        font-size:20px;
     }
 
     .stat-card p{
-        font-size:12px;
-        letter-spacing:3px;
+        font-size:6px;
+        letter-spacing:1px;
     }
 }

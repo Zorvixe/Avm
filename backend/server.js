@@ -994,6 +994,16 @@ const initDatabase = async () => {
       )
       `);
 
+    // SETTINGS TABLE
+    await pool.query(`
+          CREATE TABLE IF NOT EXISTS settings(
+        id SERIAL PRIMARY KEY,
+        key VARCHAR(100) UNIQUE NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+      `);
+
     // Add this inside your initDatabase() function, after existing settings insertion
 
     // Add Shiprocket settings if not exists
@@ -1005,18 +1015,6 @@ const initDatabase = async () => {
       ('shiprocket_pickup_pincode', ''),
       ('shiprocket_webhook_secret', '')
   ON CONFLICT(key) DO NOTHING
-      `);
-
-
-
-    // SETTINGS TABLE
-    await pool.query(`
-          CREATE TABLE IF NOT EXISTS settings(
-        id SERIAL PRIMARY KEY,
-        key VARCHAR(100) UNIQUE NOT NULL,
-        value TEXT NOT NULL,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
       `);
 
     // Add this to your initDatabase() function, inside the settings initialization section:

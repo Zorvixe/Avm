@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
 import HeroSection from "../HeroSection/HeroSection";
 import Stats from "../HeroSection/Stats";
-import AboutSection from "../../pages/AboutSection";
-import "../../pages/ProductsPages.css"
+import AboutSection from "../../Pages/AboutSection";
+import "../../Pages/ProductsPages.css"
 import { ArrowRight } from "lucide-react";
 
 import { Link, useNavigate } from "react-router-dom";
 import AnimatedWave from "../../animations/AnimatedWave";
 import "./Home.css"
 import { TbBulb } from "react-icons/tb";
-import FarmerVoices from "../../pages/FarmerVoices";
+import FarmerVoices from "../../Pages/FarmerVoices";
 import { getProducts } from "../../data/products";
 
 import {

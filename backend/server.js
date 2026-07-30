@@ -5371,11 +5371,15 @@ app.post("/api/cart", verifyToken, async (req, res) => {
 
 app.get("/api/cart", verifyToken, async (req, res) => {
   const result = await pool.query(
-    `SELECT c.*, p.name, p.price, p.old_price, p.main_image_url, p.uuid, p.product_code, cat.name as category_name, p.vendor_id, c.variant_name, c.variant_price
+    `SELECT c.*, p.name, p.price, p.old_price, p.main_image_url, p.uuid, p.product_code, cat.name as category_name, p.vendor_id, 
+            COALESCE(pv.variant_name, c.variant_name) as variant_name, 
+            COALESCE(pv.price, c.variant_price) as variant_price, 
+            pv.old_price as variant_old_price
      FROM cart_items c
      JOIN products p ON c.product_id = p.id
      JOIN users u ON p.vendor_id = u.id
      LEFT JOIN categories cat ON p.category_id = cat.id
+     LEFT JOIN product_variants pv ON c.variant_id = pv.id
      WHERE c.user_id = $1 AND p.is_active = true AND u.store_active = true`, [req.user.id]
   );
   res.json({ cart: result.rows });

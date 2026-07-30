@@ -300,8 +300,13 @@ const CheckoutPage = () => {
         }
     };
 
-    const totalMRP = cartItems.reduce((acc, item) => acc + (Number(item.old_price || item.price) * item.qty), 0);
-    const mrpDiscount = Number(totalMRP) - Number(totalPrice);
+    let rawTotalMRP = cartItems.reduce((acc, item) => acc + (Number(item.variant_old_price || item.variant_price || item.old_price || item.price) * item.qty), 0);
+    let mrpDiscount = Number(rawTotalMRP) - Number(totalPrice);
+    if (mrpDiscount < 0) {
+        mrpDiscount = 0;
+        rawTotalMRP = totalPrice;
+    }
+    const totalMRP = rawTotalMRP;
     const finalAmount = Number(totalPrice) - Number(couponDiscount);
     const totalSavings = Number(mrpDiscount) + Number(couponDiscount);
     const selectedAddress = addresses.find(a => a.id === selectedAddressId);

@@ -11,6 +11,8 @@ import "./Home.css"
 import { TbBulb } from "react-icons/tb";
 import FarmerVoices from "../../Pages/FarmerVoices";
 import { getProducts } from "../../data/products";
+import { useCart } from "../../context/CartContext";
+import { useUser } from "../../context/UserContext";
 
 import {
   UserRound,
@@ -113,6 +115,113 @@ export const faqs = [
   }
 ];
 
+const HomeProductCard = ({ item, getImageUrl, navigate }) => {
+  const { addToCart } = useCart();
+  const { setShowLogin } = useUser();
+  const token = localStorage.getItem("token");
+
+  let variants = [];
+  if (item.variants) {
+    if (typeof item.variants === 'string') {
+      try { variants = JSON.parse(item.variants); } catch (e) {}
+    } else if (Array.isArray(item.variants)) {
+      variants = item.variants;
+    }
+  }
+
+  const [selectedVariant, setSelectedVariant] = useState(
+    variants.length > 0 ? variants[0] : null
+  );
+
+  const handleAddToCart = (e) => {
+    e.stopPropagation();
+    if (!token) {
+      if (setShowLogin) setShowLogin(true);
+      return;
+    }
+    const currentPrice = selectedVariant?.price !== undefined && selectedVariant?.price !== null && Number(selectedVariant.price) > 0 ? Number(selectedVariant.price) : Number(item.price || 0);
+    
+    addToCart({
+      ...item,
+      id: item.id,
+      qty: 1,
+      price: currentPrice,
+      variant_id: selectedVariant?.id || null,
+      variant_name: selectedVariant?.variant_name || null,
+      variant_price: selectedVariant?.price || null
+    });
+  };
+
+  const handleNavigate = () => {
+    if (item.uuid) {
+      const slugStr = item.name
+        ? item.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+        : item.slug || "product";
+      navigate(`/product/${item.uuid}/${slugStr}`);
+    } else {
+      navigate("/all-products");
+    }
+  };
+
+  const currentPrice = selectedVariant?.price ? Number(selectedVariant.price) : Number(item.price || 0);
+  const oldPrice = selectedVariant?.old_price ? Number(selectedVariant.old_price) : Number(item.old_price || 0);
+
+  return (
+    <div className="product-card" onClick={handleNavigate} style={{ cursor: 'pointer' }}>
+      <div className="product-image-wrapper">
+        <img
+          className="product-image"
+          src={getImageUrl(item.main_image_url)}
+          alt={item.title || item.name}
+        />
+        <span className="product-badge">
+          {item.badge || item.category_name || "Featured"}
+        </span>
+        {item.npk && (
+          <span className="product-npk">
+            {item.npk}
+          </span>
+        )}
+      </div>
+
+      <div className="product-card-body-home">
+        <h2>{item.title || item.name}</h2>
+        
+        <div className="home-price-row">
+          {oldPrice > 0 && <span className="home-price-old">₹{oldPrice}</span>}
+          {currentPrice > 0 && <span className="home-price-current">₹{currentPrice}</span>}
+        </div>
+
+        {variants.length > 0 && (
+          <div className="home-variants-container" onClick={(e) => e.stopPropagation()}>
+            {variants.map(variant => (
+              <button
+                key={variant.id}
+                className={`home-variant-btn ${selectedVariant?.id === variant.id ? 'active' : ''}`}
+                onClick={() => setSelectedVariant(variant)}
+              >
+                {variant.variant_name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="product-footer">
+          <button className="home-add-to-cart-btn" onClick={handleAddToCart}>
+            Add to Cart
+          </button>
+          <button className="home-view-details-btn" onClick={(e) => { e.stopPropagation(); handleNavigate(); }}>
+            Details
+            <div className="product-circle">
+              <ArrowRight size={18} />
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function Home() {
   const navigate = useNavigate();
   const cards = [...testimonials, ...testimonials];
@@ -193,55 +302,7 @@ function Home() {
 
         <div className="products-container">
           {products.map((item) => (
-            <div className="product-card" key={item.id || item.uuid}>
-              <div className="product-image-wrapper">
-                <img
-                  className="product-image"
-                  src={getImageUrl(item.main_image_url)}
-                  alt={item.title || item.name}
-                />
-
-                <span className="product-badge">
-                  {item.badge || item.category_name || "Featured"}
-                </span>
-
-                {item.npk && (
-                  <span className="product-npk">
-                    {item.npk}
-                  </span>
-                )}
-              </div>
-
-              <div className="product-card-body-home">
-
-                <h2>{item.title || item.name}</h2>
-
-                <div className="product-footer">
-                  <button
-                    onClick={() => {
-                      if (item.uuid) {
-                        const slugStr = item.name
-                          ? item.name
-                            .toLowerCase()
-                            .replace(/[^a-z0-9]+/g, "-")
-                            .replace(/^-|-$/g, "")
-                          : item.slug || "product";
-
-                        navigate(`/product/${item.uuid}/${slugStr}`);
-                      } else {
-                        navigate("/all-products");
-                      }
-                    }}
-                  >
-                    VIEW DETAILS
-
-                    <div className="product-circle">
-                      <ArrowRight size={18} />
-                    </div>
-                  </button>
-                </div>
-              </div>
-            </div>
+            <HomeProductCard key={item.id || item.uuid} item={item} getImageUrl={getImageUrl} navigate={navigate} />
           ))}
         </div>
 

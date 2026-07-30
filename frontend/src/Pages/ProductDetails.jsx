@@ -527,7 +527,11 @@ const ProductDetails = () => {
   const handleBuyViaWhatsApp = async () => {
     if (!product) return;
     try {
-      const res = await axios.get(`${API_URL}/whatsapp/product-url/${product.id || product.uuid}?quantity=${quantity}`);
+      let queryParams = `?quantity=${quantity}`;
+      if (selectedVariant) {
+        queryParams += `&variant_name=${encodeURIComponent(selectedVariant.variant_name)}&variant_price=${selectedVariant.price}`;
+      }
+      const res = await axios.get(`${API_URL}/whatsapp/product-url/${product.id || product.uuid}${queryParams}`);
       if (res.data && res.data.success && res.data.whatsapp_url) {
         window.open(res.data.whatsapp_url, '_blank');
         return;

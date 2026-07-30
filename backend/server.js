@@ -3613,7 +3613,7 @@ app.get("/api/product/:uuid", async (req, res) => {
 app.get("/api/whatsapp/product-url/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { quantity = 1 } = req.query;
+    const { quantity = 1, variant_name, variant_price } = req.query;
     let product = null;
     if (isNaN(id)) {
       const resUuid = await pool.query(`SELECT p.*, u.phone AS vendor_phone FROM products p JOIN users u ON p.vendor_id = u.id WHERE p.uuid = $1 OR p.product_code = $1`, [id]);
@@ -3637,10 +3637,14 @@ app.get("/api/whatsapp/product-url/:id", async (req, res) => {
     } catch (e) {}
 
     const productUrl = `${req.headers.origin || 'https://www.avmagrilifescience.com'}/product/${product.uuid || product.id}`;
-    const message = `Hello AVM Agri Life Science,\n\nI want to buy this product via WhatsApp:\n🌾 *Product:* ${product.name}\n🏷️ *SKU:* ${product.product_code || product.sku || 'N/A'}\n💰 *Price:* ₹${product.discount_price || product.price}\n📦 *Quantity:* ${quantity}\n🔗 *Link:* ${productUrl}\n\nPlease guide me with the order process and payment.`;
+    
+    const variantInfo = variant_name ? `\n🏷️ *Variant:* ${variant_name}` : '';
+    const priceToUse = variant_price ? variant_price : (product.discount_price || product.price);
+
+    const message = `Hello AVM Agri Life Science,\n\nI want to buy this product via WhatsApp:\n🌾 *Product:* ${product.name}${variantInfo}\n🏷️ *SKU:* ${product.product_code || product.sku || 'N/A'}\n💰 *Price:* ₹${priceToUse}\n📦 *Quantity:* ${quantity}\n🔗 *Link:* ${productUrl}\n\nPlease guide me with the order process and payment.`;
     const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
 
-    res.json({ success: true, whatsapp_number: whatsappNumber, message, whatsapp_url: whatsappUrl, product: { name: product.name, price: product.discount_price || product.price } });
+    res.json({ success: true, whatsapp_number: whatsappNumber, message, whatsapp_url: whatsappUrl, product: { name: product.name, price: priceToUse } });
   } catch (err) {
     console.error("Error generating WhatsApp URL:", err);
     res.status(500).json({ success: false, message: "Server error" });

@@ -62,15 +62,17 @@ export const CartProvider = ({ children }) => {
     const activeToken = localStorage.getItem("token");
 
     if (!activeToken) {
-      // Guest mode: ensure we store vendor_id
+      // Guest mode: ensure we store vendor_id and handle variants correctly
       setCartItems(prev => {
-        const exist = prev.find(i => i.id === product.id);
+        const exist = prev.find(i => i.product_id === (product.product_id || product.id) && i.variant_id === product.variant_id);
         if (exist) {
-          return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + (product.qty || 1) } : i);
+          return prev.map(i => (i.product_id === (product.product_id || product.id) && i.variant_id === product.variant_id) ? { ...i, qty: i.qty + (product.qty || 1) } : i);
         }
         // Spread product and explicitly include vendor_id
         return [...prev, {
           ...product,
+          id: product.variant_id ? `${product.id}-${product.variant_id}` : product.id,
+          product_id: product.product_id || product.id,
           qty: product.qty || 1,
           vendor_id: product.vendor_id   // ✅ ensure vendor_id is present
         }];
@@ -82,7 +84,13 @@ export const CartProvider = ({ children }) => {
     try {
       await axios.post(
         `${API_URL}/cart`,
-        { product_id: product.id, quantity: product.qty || 1 },
+        { 
+          product_id: product.id, 
+          quantity: product.qty || 1,
+          variant_id: product.variant_id,
+          variant_name: product.variant_name,
+          variant_price: product.variant_price
+        },
         { headers: { Authorization: `Bearer ${activeToken}` } }
       );
       await fetchCart();

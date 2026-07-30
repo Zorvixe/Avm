@@ -35,8 +35,6 @@ const AddProduct = ({ onClose }) => {
   const [product, setProduct] = useState({
     name: "",
     description: "",
-    price: "",
-    old_price: "",
     category_id: "",
     stock_quantity: "",
     sku: "",
@@ -51,7 +49,7 @@ const AddProduct = ({ onClose }) => {
     platform_fee_percent: 10.00,
   });
   const [variants, setVariants] = useState([
-    { id: Date.now(), variant_name: "", quantity: "", unit: "ml", price: "", stock_quantity: "", is_active: true }
+    { id: Date.now(), variant_name: "", quantity: "", unit: "ml", price: "", old_price: "", stock_quantity: "", is_active: true }
   ]);
 
   const [mainImage, setMainImage] = useState(null);
@@ -170,7 +168,7 @@ const AddProduct = ({ onClose }) => {
   };
 
   const addVariant = () => {
-    setVariants((prev) => [...prev, { id: Date.now() + Math.random(), variant_name: "", quantity: "", unit: "ml", price: "", stock_quantity: "", is_active: true }]);
+    setVariants((prev) => [...prev, { id: Date.now() + Math.random(), variant_name: "", quantity: "", unit: "ml", price: "", old_price: "", stock_quantity: "", is_active: true }]);
   };
 
   const removeVariant = (index) => {
@@ -403,8 +401,6 @@ const AddProduct = ({ onClose }) => {
     if (!product.name.trim()) return toast.error("Product name is required");
     if (!mainImage) return toast.error("Main image is required");
     if (!product.category_id) return toast.error("Category is required");
-    if (!product.price || product.price <= 0)
-      return toast.error("Valid price is required");
     if (!product.sku.trim()) return toast.error("SKU is required");
     if (!product.product_code.trim())
       return toast.error("Product code is required");
@@ -426,12 +422,9 @@ const AddProduct = ({ onClose }) => {
       const formData = new FormData();
       formData.append("name", product.name.trim());
       formData.append("description", product.description || "");
-      formData.append("price", Number(product.price));
       formData.append("category_id", Number(product.category_id));
       formData.append("sku", product.sku.trim());
       formData.append("product_code", product.product_code.trim());
-      if (product.old_price)
-        formData.append("old_price", Number(product.old_price));
       if (product.stock_quantity)
         formData.append("stock_quantity", Number(product.stock_quantity));
       formData.append("is_featured", product.is_featured);
@@ -475,7 +468,6 @@ const AddProduct = ({ onClose }) => {
     }
   };
 
-  const priceVal = Number(product.price) || 0;
   const stockVal = Number(product.stock_quantity) || 0;
 
   return (
@@ -654,33 +646,6 @@ const AddProduct = ({ onClose }) => {
               <h4 className="add-prod-section-title">Variants & Pricing</h4>
               <button type="button" className="add-prod-btn-suggest" onClick={addVariant}>+ Add Variant</button>
             </div>
-            <div className="add-prod-form-row">
-              <div className="add-prod-form-group">
-                <label>Selling Price (₹) <span className="add-prod-required">*</span></label>
-                <input
-                  type="number"
-                  step="0.01"
-                  name="price"
-                  placeholder="0.00"
-                  value={product.price}
-                  onChange={handleChange}
-                  required
-                />
-              </div>
-              <div className="add-prod-form-group">
-                <label>Old Price (₹)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  name="old_price"
-                  placeholder="0.00"
-                  value={product.old_price}
-                  onChange={handleChange}
-                />
-              </div>
-            </div>
-
-
 
             <div className="add-prod-variant-list">
               {variants.map((variant, index) => (
@@ -709,8 +674,12 @@ const AddProduct = ({ onClose }) => {
                   </div>
                   <div className="add-prod-form-row">
                     <div className="add-prod-form-group">
-                      <label>Price (₹)</label>
+                      <label>Selling Price (₹)</label>
                       <input type="number" step="0.01" value={variant.price} onChange={(e) => updateVariant(index, "price", e.target.value)} placeholder="0.00" />
+                    </div>
+                    <div className="add-prod-form-group">
+                      <label>Old Price (₹)</label>
+                      <input type="number" step="0.01" value={variant.old_price} onChange={(e) => updateVariant(index, "old_price", e.target.value)} placeholder="0.00" />
                     </div>
                     <div className="add-prod-form-group">
                       <label>Stock</label>
@@ -720,8 +689,6 @@ const AddProduct = ({ onClose }) => {
                 </div>
               ))}
             </div>
-
-
           </div>
 
           <div className="add-prod-form-section">

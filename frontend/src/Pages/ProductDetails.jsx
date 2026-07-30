@@ -493,6 +493,7 @@ const ProductDetails = () => {
 
   const selectedVariant = product?.variants?.find((variant) => variant.id === selectedVariantId) || null;
   const currentPrice = selectedVariant?.price !== undefined && selectedVariant?.price !== null && Number(selectedVariant.price) > 0 ? Number(selectedVariant.price) : Number(product?.price || 0);
+  const currentOldPrice = selectedVariant?.old_price !== undefined && selectedVariant?.old_price !== null && Number(selectedVariant.old_price) > 0 ? Number(selectedVariant.old_price) : Number(product?.old_price || 0);
   const currentStock = selectedVariant?.stock_quantity !== undefined && selectedVariant?.stock_quantity !== null ? Number(selectedVariant.stock_quantity) : Number(product?.stock_quantity || 0);
 
   const handleAddToCart = () => {
@@ -542,10 +543,10 @@ const ProductDetails = () => {
 
   const handleShare = () => {
     if (!product) return;
-    const discountText = product.old_price && product.old_price > product.price
-      ? `🔥 ${Math.round(((product.old_price - product.price) / product.old_price) * 100)}% OFF! `
+    const discountText = currentOldPrice && currentOldPrice > currentPrice
+      ? `🔥 ${Math.round(((currentOldPrice - currentPrice) / currentOldPrice) * 100)}% OFF! `
       : '';
-    const shareText = `✨ ${product.name} ✨\n💰 Price: ₹${product.price} ${discountText}\n⭐ Rated ${avgRating.toFixed(1)} by ${totalReviews} customers.\n🌱 Shop now at AVM Agri Life Science - High-Yield Plant Nutrition.`;
+    const shareText = `✨ ${product.name} ✨\n💰 Price: ₹${currentPrice} ${discountText}\n⭐ Rated ${avgRating.toFixed(1)} by ${totalReviews} customers.\n🌱 Shop now at AVM Agri Life Science - High-Yield Plant Nutrition.`;
     const shareData = { title: product.name, text: shareText, url: window.location.href };
 
     if (navigator.share) {
@@ -744,11 +745,11 @@ const ProductDetails = () => {
               )}
 
               <div className="price-wrap">
-                {product.old_price && <span className="old-price">₹{product.old_price}</span>}
+                {currentOldPrice > 0 && <span className="old-price">₹{currentOldPrice}</span>}
                 <span className="current-price">₹{currentPrice}</span>
-                {product.old_price && Number(product.old_price) > Number(currentPrice) && (
+                {currentOldPrice > 0 && Number(currentOldPrice) > Number(currentPrice) && (
                   <span className="discount-badge">
-                    {Math.round(((Number(product.old_price) - Number(currentPrice)) / Number(product.old_price)) * 100)}% OFF
+                    {Math.round(((Number(currentOldPrice) - Number(currentPrice)) / Number(currentOldPrice)) * 100)}% OFF
                   </span>
                 )}
               </div>

@@ -689,12 +689,15 @@ const initDatabase = async () => {
         quantity DECIMAL(10, 2) DEFAULT 0,
         unit VARCHAR(20) DEFAULT 'ml',
         price DECIMAL(10, 2) DEFAULT 0,
+        old_price DECIMAL(10, 2),
         stock_quantity INTEGER DEFAULT 0,
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    
+    await pool.query(`ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS old_price DECIMAL(10, 2);`);
 
     // 7. product_images
     await pool.query(`
@@ -718,9 +721,11 @@ const initDatabase = async () => {
         variant_name VARCHAR(100),
         variant_price DECIMAL(10, 2),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(user_id, product_id)
+        UNIQUE(user_id, product_id, variant_id)
       )
       `);
+      
+    await pool.query(`ALTER TABLE cart_items DROP CONSTRAINT IF EXISTS cart_items_user_id_product_id_key CASCADE`);
 
     // 9. wishlist
     await pool.query(`
@@ -804,6 +809,8 @@ const initDatabase = async () => {
       id SERIAL PRIMARY KEY,
       order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
       product_id INTEGER REFERENCES products(id),
+      variant_id INTEGER REFERENCES product_variants(id) ON DELETE SET NULL,
+      variant_name VARCHAR(100),
       quantity INTEGER NOT NULL,
       price DECIMAL(10, 2) NOT NULL,
       vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -813,7 +820,9 @@ const initDatabase = async () => {
     await pool.query(`
       ALTER TABLE order_items 
       ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      ADD COLUMN IF NOT EXISTS vendor_earning DECIMAL(10, 2) DEFAULT 0;
+      ADD COLUMN IF NOT EXISTS vendor_earning DECIMAL(10, 2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS variant_id INTEGER REFERENCES product_variants(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS variant_name VARCHAR(100);
     `);
 
     // PAYOUTS
@@ -3458,6 +3467,7 @@ const normalizeVariantInput = (variant) => ({
   quantity: variant?.quantity !== undefined && variant?.quantity !== "" ? Number(variant.quantity) : 0,
   unit: variant?.unit || "ml",
   price: variant?.price !== undefined && variant?.price !== "" && variant?.price !== null ? Number(variant.price) : null,
+  old_price: variant?.old_price !== undefined && variant?.old_price !== "" && variant?.old_price !== null ? Number(variant.old_price) : null,
   stock_quantity: variant?.stock_quantity !== undefined && variant?.stock_quantity !== "" ? Number(variant.stock_quantity) : 0,
   is_active: variant?.is_active !== false
 });
@@ -3509,7 +3519,7 @@ app.post(
     const uploadedFiles = [];
     try {
       const { name, description, old_price, price, category_id, sub_category_id, sku, stock_quantity, is_featured, color, product_code, weight, length, width, height } = req.body;
-      if (!name || !price || !category_id) throw new Error("Name, price and category required");
+      if (!name || !category_id) throw new Error("Name and category required");
 
       const rawVariants = parseVariantsPayload(req.body.variants);
       const normalizedVariants = rawVariants
@@ -3517,24 +3527,25 @@ app.post(
         .filter((variant) => variant.variant_name || variant.quantity || variant.price || variant.stock_quantity);
       const variantRows = normalizedVariants.length > 0
         ? normalizedVariants
-        : [{ variant_name: "Default", quantity: 0, unit: "ml", price: Number(price) || 0, stock_quantity: Number(stock_quantity) || 0, is_active: true }];
+        : [{ variant_name: "Default", quantity: 0, unit: "ml", price: Number(price) || 0, old_price: old_price ? Number(old_price) : null, stock_quantity: Number(stock_quantity) || 0, is_active: true }];
       const totalVariantStock = variantRows.reduce((sum, variant) => sum + Number(variant.stock_quantity || 0), 0);
       const firstVariantPrice = variantRows[0]?.price !== undefined && variantRows[0]?.price !== null ? Number(variantRows[0].price) : Number(price) || 0;
+      const firstVariantOldPrice = variantRows[0]?.old_price !== undefined && variantRows[0]?.old_price !== null ? Number(variantRows[0].old_price) : (old_price ? Number(old_price) : null);
 
       let main_image_url = null; let video_url = null;
-      if (req.files?.image) { main_image_url = `/uploads/products/images/${req.files.image[0].filename} `; uploadedFiles.push(req.files.image[0].path); }
-      if (req.files?.video) { video_url = `/uploads/products/videos/${req.files.video[0].filename} `; uploadedFiles.push(req.files.video[0].path); }
+      if (req.files?.image) { main_image_url = `/uploads/products/images/${req.files.image[0].filename}`; uploadedFiles.push(req.files.image[0].path); }
+      if (req.files?.video) { video_url = `/uploads/products/videos/${req.files.video[0].filename}`; uploadedFiles.push(req.files.video[0].path); }
 
       const result = await pool.query(
-        `INSERT INTO products(name, description, old_price, price, category_id, sub_category_id, main_image_url, video_url, sku, stock_quantity, is_featured, color, product_code, weight, length, width, height, vendor_id) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING * `,
-        [name, description, old_price, firstVariantPrice, category_id, sub_category_id, main_image_url, video_url, sku, totalVariantStock || stock_quantity || 0, is_featured === "true" || is_featured === true, color, product_code, weight || 0.7, length || 30, width || 20, height || 5, req.user.id]
+        `INSERT INTO products(name, description, old_price, price, category_id, sub_category_id, main_image_url, video_url, sku, stock_quantity, is_featured, color, product_code, weight, length, width, height, vendor_id) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *`,
+        [name, description, firstVariantOldPrice, firstVariantPrice, category_id, sub_category_id, main_image_url, video_url, sku, totalVariantStock || stock_quantity || 0, is_featured === "true" || is_featured === true, color, product_code, weight || 0.7, length || 30, width || 20, height || 5, req.user.id]
       );
 
       const productId = result.rows[0].id;
       for (const variant of variantRows) {
         await pool.query(
-          `INSERT INTO product_variants(product_id, variant_name, quantity, unit, price, stock_quantity, is_active) VALUES($1, $2, $3, $4, $5, $6, $7)`,
-          [productId, variant.variant_name, variant.quantity, variant.unit, variant.price, variant.stock_quantity, variant.is_active]
+          `INSERT INTO product_variants(product_id, variant_name, quantity, unit, price, old_price, stock_quantity, is_active) VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [productId, variant.variant_name, variant.quantity, variant.unit, variant.price, variant.old_price, variant.stock_quantity, variant.is_active]
         );
       }
 
@@ -3729,9 +3740,10 @@ app.put(
         .filter((variant) => variant.variant_name || variant.quantity || variant.price || variant.stock_quantity);
       const variantRows = normalizedVariants.length > 0
         ? normalizedVariants
-        : [{ variant_name: "Default", quantity: 0, unit: "ml", price: price || 0, stock_quantity: stock_quantity || 0, is_active: true }];
+        : [{ variant_name: "Default", quantity: 0, unit: "ml", price: price || 0, old_price: old_price || null, stock_quantity: stock_quantity || 0, is_active: true }];
       const totalVariantStock = variantRows.reduce((sum, variant) => sum + Number(variant.stock_quantity || 0), 0);
       const firstVariantPrice = variantRows[0]?.price !== undefined && variantRows[0]?.price !== null ? Number(variantRows[0].price) : Number(price) || 0;
+      const firstVariantOldPrice = variantRows[0]?.old_price !== undefined && variantRows[0]?.old_price !== null ? Number(variantRows[0].old_price) : (old_price ? Number(old_price) : null);
 
       let main_image_url = null; let video_url = null;
       if (req.files?.image) { main_image_url = `/uploads/products/images/${req.files.image[0].filename} `; uploadedFiles.push(req.files.image[0].path); }
@@ -3740,7 +3752,7 @@ app.put(
       const updates = []; const values = []; let paramCount = 1;
       const addField = (field, value) => { if (value !== undefined) { updates.push(`${field} = $${paramCount++} `); values.push(value); } };
 
-      addField('name', name); addField('description', description); addField('old_price', old_price); addField('price', price !== undefined ? price : firstVariantPrice); addField('stock_quantity', stock_quantity !== undefined ? stock_quantity : totalVariantStock); addField('is_featured', is_featured); addField('is_active', is_active); addField('color', color); addField('sku', sku); addField('product_code', product_code); addField('weight', weight !== undefined && weight !== "" ? Number(weight) : undefined); addField('length', length !== undefined && length !== "" ? Number(length) : undefined); addField('width', width !== undefined && width !== "" ? Number(width) : undefined); addField('height', height !== undefined && height !== "" ? Number(height) : undefined); addField('category_id', categoryId); addField('sub_category_id', subCategoryId);
+      addField('name', name); addField('description', description); addField('old_price', firstVariantOldPrice); addField('price', firstVariantPrice); addField('stock_quantity', stock_quantity !== undefined ? stock_quantity : totalVariantStock); addField('is_featured', is_featured); addField('is_active', is_active); addField('color', color); addField('sku', sku); addField('product_code', product_code); addField('weight', weight !== undefined && weight !== "" ? Number(weight) : undefined); addField('length', length !== undefined && length !== "" ? Number(length) : undefined); addField('width', width !== undefined && width !== "" ? Number(width) : undefined); addField('height', height !== undefined && height !== "" ? Number(height) : undefined); addField('category_id', categoryId); addField('sub_category_id', subCategoryId);
       if (main_image_url) addField('main_image_url', main_image_url);
       if (video_url) addField('video_url', video_url);
       updates.push(`updated_at = NOW()`); values.push(id);
@@ -3751,8 +3763,8 @@ app.put(
         await pool.query('DELETE FROM product_variants WHERE product_id = $1', [id]);
         for (const variant of variantRows) {
           await pool.query(
-            `INSERT INTO product_variants(product_id, variant_name, quantity, unit, price, stock_quantity, is_active) VALUES($1, $2, $3, $4, $5, $6, $7)`,
-            [id, variant.variant_name, variant.quantity, variant.unit, variant.price, variant.stock_quantity, variant.is_active]
+            `INSERT INTO product_variants(product_id, variant_name, quantity, unit, price, old_price, stock_quantity, is_active) VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [id, variant.variant_name, variant.quantity, variant.unit, variant.price, variant.old_price, variant.stock_quantity, variant.is_active]
           );
         }
         const productWithVariants = await attachVariantsToProduct(result.rows[0]);
@@ -4375,8 +4387,12 @@ app.post("/api/orders", verifyToken, async (req, res) => {
       if (prodRes.rows.length === 0) {
         throw new Error("Product is not available");
       }
+      let variantRes = null;
+      if (item.variant_id) {
+        variantRes = await client.query(`SELECT price FROM product_variants WHERE id = $1`, [item.variant_id]);
+      }
       const vendor_id = prodRes.rows[0]?.vendor_id || null;
-      const original_price = parseFloat(prodRes.rows[0]?.price || item.price);
+      const original_price = parseFloat(variantRes?.rows[0]?.price || item.variant_price || prodRes.rows[0]?.price || item.price);
       const platform_fee_percent = 0;
       const qty = parseInt(item.quantity || 1);
 
@@ -4391,15 +4407,21 @@ app.post("/api/orders", verifyToken, async (req, res) => {
       const vendor_earning = discounted_price * qty;
 
       await client.query(
-        `INSERT INTO order_items(order_id, product_id, quantity, price, vendor_id, vendor_earning)
-VALUES($1, $2, $3, $4, $5, $6)`,
-        [orderId, item.product_id || item.id, qty, discounted_price, vendor_id, vendor_earning]
+        `INSERT INTO order_items(order_id, product_id, variant_id, variant_name, quantity, price, vendor_id, vendor_earning)
+VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [orderId, item.product_id || item.id, item.variant_id || null, item.variant_name || null, qty, discounted_price, vendor_id, vendor_earning]
       );
 
       await client.query(
         `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2`,
         [qty, item.product_id || item.id]
       );
+      if (item.variant_id) {
+        await client.query(
+          `UPDATE product_variants SET stock_quantity = stock_quantity - $1 WHERE id = $2`,
+          [qty, item.variant_id]
+        );
+      }
     }
 
     if (coupon_id) {
@@ -4526,8 +4548,12 @@ app.post("/api/razorpay/verify", verifyToken, async (req, res) => {
       if (prodRes.rows.length === 0) {
         throw new Error("Product is not available");
       }
+      let variantRes = null;
+      if (item.variant_id) {
+        variantRes = await client.query(`SELECT price FROM product_variants WHERE id = $1`, [item.variant_id]);
+      }
       const vendor_id = prodRes.rows[0]?.vendor_id || null;
-      const original_price = parseFloat(prodRes.rows[0]?.price || item.price);
+      const original_price = parseFloat(variantRes?.rows[0]?.price || item.variant_price || prodRes.rows[0]?.price || item.price);
       const platform_fee_percent = 0;
       const qty = parseInt(item.quantity || 1);
 
@@ -4542,15 +4568,21 @@ app.post("/api/razorpay/verify", verifyToken, async (req, res) => {
       const vendor_earning = discounted_price * qty;
 
       await client.query(
-        `INSERT INTO order_items(order_id, product_id, quantity, price, vendor_id, vendor_earning)
-VALUES($1, $2, $3, $4, $5, $6)`,
-        [orderId, item.product_id || item.id, qty, discounted_price, vendor_id, vendor_earning]
+        `INSERT INTO order_items(order_id, product_id, variant_id, variant_name, quantity, price, vendor_id, vendor_earning)
+VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [orderId, item.product_id || item.id, item.variant_id || null, item.variant_name || null, qty, discounted_price, vendor_id, vendor_earning]
       );
 
       await client.query(
         `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2`,
         [qty, item.product_id || item.id]
       );
+      if (item.variant_id) {
+        await client.query(
+          `UPDATE product_variants SET stock_quantity = stock_quantity - $1 WHERE id = $2`,
+          [qty, item.variant_id]
+        );
+      }
     }
 
     if (coupon_id) {
@@ -7379,7 +7411,7 @@ app.delete("/api/admin/orders/:id", verifyToken, verifyAdminOrSuperAdmin, async 
 
     // Restore stock quantities for products in this order
     const orderItems = await client.query(
-      "SELECT product_id, quantity FROM order_items WHERE order_id = $1",
+      "SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = $1",
       [orderId]
     );
 
@@ -7388,6 +7420,12 @@ app.delete("/api/admin/orders/:id", verifyToken, verifyAdminOrSuperAdmin, async 
         "UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2",
         [item.quantity, item.product_id]
       );
+      if (item.variant_id) {
+        await client.query(
+          "UPDATE product_variants SET stock_quantity = stock_quantity + $1 WHERE id = $2",
+          [item.quantity, item.variant_id]
+        );
+      }
     }
 
     // Delete order items first (due to foreign key constraint)
@@ -7511,7 +7549,7 @@ app.post("/api/admin/orders/bulk-delete", verifyToken, verifyAdminOrSuperAdmin, 
 
         // Restore stock
         const orderItems = await client.query(
-          "SELECT product_id, quantity FROM order_items WHERE order_id = $1",
+          "SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = $1",
           [orderId]
         );
 
@@ -7520,6 +7558,12 @@ app.post("/api/admin/orders/bulk-delete", verifyToken, verifyAdminOrSuperAdmin, 
             "UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2",
             [item.quantity, item.product_id]
           );
+          if (item.variant_id) {
+            await client.query(
+              "UPDATE product_variants SET stock_quantity = stock_quantity + $1 WHERE id = $2",
+              [item.quantity, item.variant_id]
+            );
+          }
         }
 
         // Delete order items and order

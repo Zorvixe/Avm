@@ -38,8 +38,6 @@ const EditProduct = ({ id, onClose }) => {
   const [product, setProduct] = useState({
     name: "",
     description: "",
-    price: "",
-    old_price: "",
     stock_quantity: 0,
     category_id: "",
     sku: "",
@@ -91,7 +89,7 @@ const EditProduct = ({ id, onClose }) => {
       });
       const p = productRes.data.product;
       setProduct(p);
-      setVariants(Array.isArray(p.variants) && p.variants.length > 0 ? p.variants.map((variant) => ({ ...variant, id: variant.id || Date.now() + Math.random() })) : [{ id: Date.now(), variant_name: "", quantity: "", unit: "ml", price: p.price || "", stock_quantity: p.stock_quantity || "", is_active: true }]);
+      setVariants(Array.isArray(p.variants) && p.variants.length > 0 ? p.variants.map((variant) => ({ ...variant, id: variant.id || Date.now() + Math.random() })) : [{ id: Date.now(), variant_name: "", quantity: "", unit: "ml", price: p.price || "", old_price: p.old_price || "", stock_quantity: p.stock_quantity || "", is_active: true }]);
       setDescription(p.description || "");
       if (p.sku) checkSkuAvailability(p.sku);
       if (p.product_code) checkProductCodeAvailability(p.product_code);
@@ -130,7 +128,7 @@ const EditProduct = ({ id, onClose }) => {
   };
 
   const addVariant = () => {
-    setVariants((prev) => [...prev, { id: Date.now() + Math.random(), variant_name: "", quantity: "", unit: "ml", price: "", stock_quantity: "", is_active: true }]);
+    setVariants((prev) => [...prev, { id: Date.now() + Math.random(), variant_name: "", quantity: "", unit: "ml", price: "", old_price: "", stock_quantity: "", is_active: true }]);
   };
 
   const removeVariant = (index) => {
@@ -304,6 +302,10 @@ const EditProduct = ({ id, onClose }) => {
           formData.append(key, product[key]);
         }
       });
+      formData.append("description", product.description || "");
+      formData.append("category_id", product.category_id || "");
+      formData.append("sku", product.sku || "");
+      formData.append("product_code", product.product_code || "");
       formData.append("variants", JSON.stringify(variants));
       if (mainImage) formData.append("image", mainImage);
       if (video) formData.append("video", video);
@@ -346,7 +348,6 @@ const EditProduct = ({ id, onClose }) => {
     );
   }
 
-  const priceVal = Number(product.price) || 0;
   const stockVal = Number(product.stock_quantity) || 0;
 
   return (
@@ -511,31 +512,6 @@ const EditProduct = ({ id, onClose }) => {
             <h4 className="add-prod-section-title">Variants & Pricing</h4>
             <button type="button" className="add-prod-btn-suggest" onClick={addVariant}>+ Add Variant</button>
           </div>
-          <div className="add-prod-form-row">
-            <div className="add-prod-form-group">
-              <label>Selling Price (₹) <span className="add-prod-required">*</span></label>
-              <input
-                type="number"
-                step="0.01"
-                name="price"
-                value={product.price}
-                onChange={handleChange}
-                required
-              />
-            </div>
-            <div className="add-prod-form-group">
-              <label>Old Price (₹)</label>
-              <input
-                type="number"
-                step="0.01"
-                name="old_price"
-                value={product.old_price || ""}
-                onChange={handleChange}
-              />
-            </div>
-          </div>
-
-
 
           <div className="add-prod-variant-list">
             {variants.map((variant, index) => (
@@ -564,8 +540,12 @@ const EditProduct = ({ id, onClose }) => {
                 </div>
                 <div className="add-prod-form-row">
                   <div className="add-prod-form-group">
-                    <label>Price (₹)</label>
+                    <label>Selling Price (₹)</label>
                     <input type="number" step="0.01" value={variant.price || ""} onChange={(e) => updateVariant(index, "price", e.target.value)} placeholder="0.00" />
+                  </div>
+                  <div className="add-prod-form-group">
+                    <label>Old Price (₹)</label>
+                    <input type="number" step="0.01" value={variant.old_price || ""} onChange={(e) => updateVariant(index, "old_price", e.target.value)} placeholder="0.00" />
                   </div>
                   <div className="add-prod-form-group">
                     <label>Stock</label>

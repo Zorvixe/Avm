@@ -3457,7 +3457,7 @@ const normalizeVariantInput = (variant) => ({
   variant_name: variant?.variant_name || variant?.name || variant?.label || "Default",
   quantity: variant?.quantity !== undefined && variant?.quantity !== "" ? Number(variant.quantity) : 0,
   unit: variant?.unit || "ml",
-  price: variant?.price !== undefined && variant?.price !== "" ? Number(variant.price) : 0,
+  price: variant?.price !== undefined && variant?.price !== "" && variant?.price !== null ? Number(variant.price) : null,
   stock_quantity: variant?.stock_quantity !== undefined && variant?.stock_quantity !== "" ? Number(variant.stock_quantity) : 0,
   is_active: variant?.is_active !== false
 });
@@ -3519,7 +3519,7 @@ app.post(
         ? normalizedVariants
         : [{ variant_name: "Default", quantity: 0, unit: "ml", price: Number(price) || 0, stock_quantity: Number(stock_quantity) || 0, is_active: true }];
       const totalVariantStock = variantRows.reduce((sum, variant) => sum + Number(variant.stock_quantity || 0), 0);
-      const firstVariantPrice = variantRows[0]?.price !== undefined ? Number(variantRows[0].price) : Number(price) || 0;
+      const firstVariantPrice = variantRows[0]?.price !== undefined && variantRows[0]?.price !== null ? Number(variantRows[0].price) : Number(price) || 0;
 
       let main_image_url = null; let video_url = null;
       if (req.files?.image) { main_image_url = `/uploads/products/images/${req.files.image[0].filename} `; uploadedFiles.push(req.files.image[0].path); }
@@ -3731,7 +3731,7 @@ app.put(
         ? normalizedVariants
         : [{ variant_name: "Default", quantity: 0, unit: "ml", price: price || 0, stock_quantity: stock_quantity || 0, is_active: true }];
       const totalVariantStock = variantRows.reduce((sum, variant) => sum + Number(variant.stock_quantity || 0), 0);
-      const firstVariantPrice = variantRows[0]?.price !== undefined ? Number(variantRows[0].price) : Number(price) || 0;
+      const firstVariantPrice = variantRows[0]?.price !== undefined && variantRows[0]?.price !== null ? Number(variantRows[0].price) : Number(price) || 0;
 
       let main_image_url = null; let video_url = null;
       if (req.files?.image) { main_image_url = `/uploads/products/images/${req.files.image[0].filename} `; uploadedFiles.push(req.files.image[0].path); }

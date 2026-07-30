@@ -492,7 +492,7 @@ const ProductDetails = () => {
   };
 
   const selectedVariant = product?.variants?.find((variant) => variant.id === selectedVariantId) || null;
-  const currentPrice = selectedVariant?.price !== undefined && selectedVariant?.price !== null ? Number(selectedVariant.price) : Number(product?.price || 0);
+  const currentPrice = selectedVariant?.price !== undefined && selectedVariant?.price !== null && Number(selectedVariant.price) > 0 ? Number(selectedVariant.price) : Number(product?.price || 0);
   const currentStock = selectedVariant?.stock_quantity !== undefined && selectedVariant?.stock_quantity !== null ? Number(selectedVariant.stock_quantity) : Number(product?.stock_quantity || 0);
 
   const handleAddToCart = () => {

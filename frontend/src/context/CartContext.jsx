@@ -25,7 +25,7 @@ export const CartProvider = ({ children }) => {
         id: item.id,
         product_id: item.product_id,
         name: item.name,
-        price: item.variant_price !== null && item.variant_price !== undefined && item.variant_price !== "" ? parseFloat(item.variant_price) : parseFloat(item.price),
+        price: item.variant_price !== null && item.variant_price !== undefined && item.variant_price !== "" && parseFloat(item.variant_price) > 0 ? parseFloat(item.variant_price) : parseFloat(item.price),
         old_price: item.old_price ? parseFloat(item.old_price) : null,
         quantity: item.quantity,
         qty: item.quantity,                 // alias for easier usage

@@ -4,6 +4,7 @@ import axios from '../utils/axiosConfig';
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import login_image from "../assets/login-image.png";
+import avm_ogo from "../assets/avm_ogo.png";
 import "./AdminLogin.css";
 
 const API_URL = process.env.REACT_APP_API_URL;
@@ -298,10 +299,9 @@ function AdminLogin() {
       <div className="ad-log-box">
         {/* Left Section: Branding & Illustration */}
         <div className="ad-log-brand-side">
-          <div className="ad-log-header">
-            <div style={{ fontWeight: '800', fontSize: '24px', color: '#064e3b', letterSpacing: '1px' }}>AVM AGRI LIFE SCIENCE</div>
-            <p className="ad-log-powered">An ISO 9001:2015 Certified Company</p>
-          </div>
+
+
+
 
           <div className="ad-log-illustration-container">
             <img src={login_image} className="ad-log-illustration" alt="Login Illustration" />
@@ -313,7 +313,6 @@ function AdminLogin() {
           {/* Welcome Section */}
           <div className="ad-log-welcome-section">
             <h2 className="ad-log-title">Welcome to AVM Agri Life Science</h2>
-            <p className="ad-log-subtitle">Please enter your admin or vendor credentials to continue</p>
           </div>
 
           {/* Sleek Method Selector */}

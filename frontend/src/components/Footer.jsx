@@ -60,6 +60,10 @@ const Footer = () => {
               <a href="https://wa.me/919502978646" target="_blank" rel="noopener noreferrer" aria-label="WhatsApp" className="social-icon ig" style={{ backgroundColor: '#16a34a', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><i className="bi bi-whatsapp"></i></a>
               <a href="mailto:avmagrilifescience@gmail.com" aria-label="Email" className="social-icon loc"><i className="bi bi-envelope"></i></a>
             </div>
+
+            <a href="https://app.avmagrilifescience.com" target="_blank" rel="noopener noreferrer" className="footer-admin-app-link" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginTop: '15px', color: '#7dd34d', fontWeight: '600', textDecoration: 'none', fontSize: '0.9rem', transition: 'opacity 0.2s ease' }} onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'} onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}>
+              <i className="bi bi-shield-lock"></i> Admin App
+            </a>
           </div>
         </div>
 

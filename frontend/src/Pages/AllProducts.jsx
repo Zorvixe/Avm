@@ -220,7 +220,7 @@ const AllProducts = () => {
               <div className="row g-4 product-grid-row">
                 {finalProducts.length > 0 ? (
                   finalProducts.map(product => (
-                    <div key={product.id} className="col-6 col-md-4 col-lg-3">
+                    <div key={product.id} className="col-6 col-md-6 col-lg-4">
                       <ProductCard
                         product={product}
                         onQuickView={setSelectedProduct}

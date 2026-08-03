@@ -155,6 +155,19 @@ const ProductCard = ({
     }
   }, [token, product?.id]);
 
+  let variants = [];
+  if (product.variants) {
+    if (typeof product.variants === 'string') {
+      try { variants = JSON.parse(product.variants); } catch (e) {}
+    } else if (Array.isArray(product.variants)) {
+      variants = product.variants;
+    }
+  }
+
+  const [selectedVariant, setSelectedVariant] = useState(
+    variants.length > 0 ? variants[0] : null
+  );
+
   /* ================= CALCULATIONS ================= */
 
   const isNew = useMemo(() => {
@@ -164,11 +177,15 @@ const ProductCard = ({
   }, [product.created_at]);
 
   const stockInfo = useMemo(() => {
-    const qty = product.stock_quantity || 0;
+    let qty = product.stock_quantity || 0;
+    if (selectedVariant && selectedVariant.stock_quantity !== undefined) {
+      qty = selectedVariant.stock_quantity;
+    }
+    qty = Number(qty) || 0;
     if (qty === 0) return { text: "Out of Stock", class: "stock-out", qty };
     if (qty <= 5) return { text: "Low Stock", class: "stock-low", qty };
     return { text: "In Stock", class: "stock-ok", qty };
-  }, [product.stock_quantity]);
+  }, [product.stock_quantity, selectedVariant]);
 
   const stockPercent = useMemo(() => {
     const MAX_STOCK = 20;
@@ -340,9 +357,26 @@ const ProductCard = ({
           <h3 className="p-name">{product.name}</h3>
 
           <div className="p-price-row">
-            {product.old_price && <span className="p-price old">₹{product.old_price}</span>}
-            <span className="p-price current">₹{product.price}</span>
+            {(selectedVariant?.old_price || product.old_price) && <span className="p-price old">₹{selectedVariant?.old_price || product.old_price}</span>}
+            <span className="p-price current">₹{selectedVariant?.price || product.price}</span>
           </div>
+
+          {variants.length > 0 && (
+            <div className="card-variants-container" onClick={(e) => e.stopPropagation()}>
+              {variants.map(variant => (
+                <button
+                  key={variant.id}
+                  className={`card-variant-btn ${selectedVariant?.id === variant.id ? 'active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedVariant(variant);
+                  }}
+                >
+                  {variant.variant_name}
+                </button>
+              ))}
+            </div>
+          )}
 
           {showStockBadge && (
             <div className="stock-status-container">
@@ -398,7 +432,14 @@ const ProductCard = ({
                   onClick={(e) => {
                     e.stopPropagation();
                     if (!token) { setShowLogin(true); return; }
-                    addToCart(product);
+                    const currentPrice = selectedVariant?.price !== undefined && selectedVariant?.price !== null && Number(selectedVariant.price) > 0 ? Number(selectedVariant.price) : Number(product.price || 0);
+                    addToCart({
+                      ...product,
+                      price: currentPrice,
+                      variant_id: selectedVariant?.id || null,
+                      variant_name: selectedVariant?.variant_name || null,
+                      variant_price: selectedVariant?.price || null
+                    });
                   }}
                 >
                   Add to Bag
@@ -409,7 +450,7 @@ const ProductCard = ({
                   onClick={(e) => {
                     e.stopPropagation();
                     const phone = product.whatsapp_number || "919502978646";
-                    const msg = `Hello AVM Agri Life Science,\n\nI want to buy this product via WhatsApp:\n🌾 *Product:* ${product.name}\n💰 *Price:* ₹${product.discount_price || product.price}\n🔗 *Link:* ${window.location.origin}/product/${product.uuid || product.id}\n\nPlease guide me with the order process and payment.`;
+                    const msg = `Hello AVM Agri Life Science,\n\nI want to buy this product via WhatsApp:\n🌾 *Product:* ${product.name}${selectedVariant ? ` (${selectedVariant.variant_name})` : ''}\n💰 *Price:* ₹${selectedVariant?.price || product.discount_price || product.price}\n🔗 *Link:* ${window.location.origin}/product/${product.uuid || product.id}\n\nPlease guide me with the order process and payment.`;
                     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
                   }}
                   style={{

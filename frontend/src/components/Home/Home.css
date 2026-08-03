@@ -540,9 +540,16 @@
 
 .home-variants-container {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 8px;
     margin-bottom: 20px;
+    overflow-x: auto;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+.home-variants-container::-webkit-scrollbar {
+    display: none;
 }
 
 .home-variant-btn {
@@ -554,6 +561,8 @@
     font-size: 14px;
     transition: all 0.3s;
     color: #555;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .home-variant-btn:hover {

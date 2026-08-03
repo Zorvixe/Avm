@@ -60,7 +60,7 @@ const WishlistPage = () => {
           const imageSrc = getItemImage(item);
           const productUrl = getProductUrl(item);
           return (
-            <div key={item.id} className="col-6 col-md-4 col-lg-3">
+            <div key={item.id} className="col-6 col-md-6 col-lg-4">
               <div 
                 className="wishlist-card" 
                 onClick={() => navigate(productUrl)}

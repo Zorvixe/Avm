@@ -171,6 +171,46 @@
   text-decoration: line-through;
 }
 
+/* VARIANTS */
+.card-variants-container {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  justify-content: flex-start;
+  overflow-x: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.card-variants-container::-webkit-scrollbar {
+  display: none;
+}
+
+.card-variant-btn {
+  padding: 6px 12px;
+  border: 1px solid #ccc;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
+  color: #555;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.card-variant-btn:hover {
+  border-color: #064e3b;
+  color: #064e3b;
+}
+
+.card-variant-btn.active {
+  background: #064e3b;
+  color: #fff;
+  border-color: #064e3b;
+}
+
 /* STOCK STATUS & METERS */
 .stock-status-container {
   min-height: 40px;
@@ -364,6 +404,16 @@
 
   .p-price.old {
     font-size: 0.75rem;
+  }
+
+  .card-variants-container {
+    justify-content: flex-start;
+    margin-bottom: 6px;
+    gap: 4px;
+  }
+  .card-variant-btn {
+    padding: 4px 8px;
+    font-size: 11px;
   }
 
   .stock-status-container {

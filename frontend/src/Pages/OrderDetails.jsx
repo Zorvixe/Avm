@@ -551,8 +551,8 @@ const OrderDetails = () => {
                         <td style={{ textAlign: 'center', padding: '12px 10px', color: '#555' }}>{idx + 1}</td>
                         <td style={{ textAlign: 'left', padding: '12px 10px', fontWeight: '500' }}>{item.name}</td>
                         <td style={{ textAlign: 'center', padding: '12px 10px', color: '#555' }}>{item.quantity}</td>
-                        <td style={{ textAlign: 'right', padding: '12px 10px', color: '#555' }}>â‚¹{parseFloat(item.price).toFixed(2)}</td>
-                        <td style={{ textAlign: 'right', padding: '12px 10px', fontWeight: '600' }}>â‚¹{(item.quantity * parseFloat(item.price)).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', padding: '12px 10px', color: '#555' }}>₹{parseFloat(item.price).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', padding: '12px 10px', fontWeight: '600' }}>₹{(item.quantity * parseFloat(item.price)).toFixed(2)}</td>
                      </tr>
                   ))}
                </tbody>
@@ -562,11 +562,11 @@ const OrderDetails = () => {
                <div style={{ width: '45%' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #eee' }}>
                      <span style={{ color: '#555' }}>Subtotal:</span>
-                     <span>â‚¹{subTotal.toFixed(2)}</span>
+                     <span>₹{subTotal.toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #eee' }}>
                      <span style={{ color: '#555' }}>Discount:</span>
-                     <span style={{ color: '#d32f2f' }}>-â‚¹{discount.toFixed(2)}</span>
+                     <span style={{ color: '#d32f2f' }}>-₹{discount.toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #000' }}>
                      <span style={{ color: '#555' }}>Shipping & Handling:</span>
@@ -574,7 +574,7 @@ const OrderDetails = () => {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '15px 0', backgroundColor: '#f9f9f9', marginTop: '10px', borderRadius: '4px' }}>
                      <strong style={{ fontSize: '18px', paddingLeft: '15px' }}>Grand Total:</strong>
-                     <strong style={{ fontSize: '18px', paddingRight: '15px', color: '#064e3b' }}>â‚¹{parseFloat(order.total_amount).toFixed(2)}</strong>
+                     <strong style={{ fontSize: '18px', paddingRight: '15px', color: '#064e3b' }}>₹{parseFloat(order.total_amount).toFixed(2)}</strong>
                   </div>
                </div>
             </div>
@@ -608,7 +608,7 @@ const OrderDetails = () => {
                            <div className="order-product-info">
                               <h2>{item.name}</h2>
                               <div className="op-price-row">
-                                 <span className="op-price">â‚¹{item.price}</span>
+                                 <span className="op-price">₹{item.price}</span>
                                  <span style={{ fontSize: '12px', color: '#878787' }}>Qty: {item.quantity}</span>
                               </div>
 
@@ -722,15 +722,15 @@ const OrderDetails = () => {
                   <h3>Price Summary</h3>
                   <div className="price-row">
                      <span>Items Subtotal</span>
-                     <span>â‚¹{subTotal}</span>
+                     <span>₹{subTotal}</span>
                   </div>
                   <div className="price-row">
                      <span>Total Discount</span>
-                     <span style={{ color: '#26a541' }}>-â‚¹{discount}</span>
+                     <span style={{ color: '#26a541' }}>-₹{discount}</span>
                   </div>
                   <div className="price-row total-row">
                      <span>Order Total</span>
-                     <span>â‚¹{order.total_amount}</span>
+                     <span>₹{order.total_amount}</span>
                   </div>
 
                   <p style={{ fontSize: '13px', color: '#878787', marginTop: '15px' }}>

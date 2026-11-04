@@ -5,7 +5,7 @@ import App from './App.jsx'
 
 // 🔥 paste your Google CLIENT ID here
 const REACT_APP_GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID
-const REACT_APP_GOOGLE_CLIENT_SECRET = process.env.REACT_APP_GOOGLE_CLIENT_ID
+const REACT_APP_GOOGLE_CLIENT_SECRET = process.env.REACT_APP_GOOGLE_CLIENT_SECRET
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

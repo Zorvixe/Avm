@@ -127,7 +127,7 @@ function AboutSection({ fullPage = false }) {
               </h1>
 
               <p>
-                Founded in 2013 under the visionary leadership of Managing Director <strong>J. Sudhakar</strong>, AVM Agri Life Science has grown into a trusted national brand — while never losing sight of our motto: <strong>"Farmer is a King"</strong>.
+                Founded in 2013 under the visionary leadership of Managing Director <strong>G. Sudhakar</strong>, AVM Agri Life Science has grown into a trusted national brand — while never losing sight of our motto: <strong>"Farmer is a King"</strong>.
               </p>
 
             </div>
@@ -204,7 +204,7 @@ function AboutSection({ fullPage = false }) {
 
                 <div style={{ margin: '20px 0', padding: '15px', background: '#f0fdf4', borderLeft: '4px solid #16a34a', borderRadius: '4px' }}>
                   <p style={{ margin: 0, fontWeight: 'bold', color: '#064e3b' }}>
-                    Managing Director: J. Sudhakar • Contact: 9502978646<br />
+                    Managing Director: G. Sudhakar • Contact: 9502978646<br />
                     Customer Care Helpdesk: 7981257228
                   </p>
                 </div>

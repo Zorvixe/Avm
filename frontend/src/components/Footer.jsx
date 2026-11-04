@@ -49,7 +49,7 @@ const Footer = () => {
           <div className="col-12 col-lg-4 footer-col contact-col">
             <h4 className="footer-heading">Contact Info</h4>
             <ul className="footer-contact-list">
-              <li><strong>MD Contact:</strong> +91 9502978646 (J. Sudhakar)</li>
+              <li><strong>MD Contact:</strong> +91 9502978646 (G. Sudhakar)</li>
               <li><strong>Customer Care:</strong> +91 7981257228</li>
               <li><strong>Email:</strong> avmagrilifescience@gmail.com</li>
               <li><strong>Address:</strong> H.No. 4-57, Injapur, Turkayamjal, Abdullapurmet Mandal, R.R. Dist, Hyderabad, TS - 500 070, India</li>

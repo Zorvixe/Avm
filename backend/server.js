@@ -3447,14 +3447,32 @@ app.get("/api/admin/products/next-available-code", verifyToken, verifyAdminVendo
 // ================= PRODUCTS =================
 const parseVariantsPayload = (payload) => {
   if (!payload) return [];
-  if (Array.isArray(payload)) return payload.filter(Boolean);
   if (typeof payload === 'string') {
     try {
       const parsed = JSON.parse(payload);
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
     } catch (err) {
       return [];
     }
+  }
+  if (Array.isArray(payload)) {
+    const result = [];
+    for (const item of payload) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        const trimmed = item.trim();
+        if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) result.push(...parsed);
+            else if (parsed && typeof parsed === 'object') result.push(parsed);
+          } catch (e) {}
+        }
+      } else if (typeof item === 'object') {
+        result.push(item);
+      }
+    }
+    return result;
   }
   if (payload && typeof payload === 'object') {
     return Array.isArray(payload.variants) ? payload.variants : [];
@@ -3463,12 +3481,13 @@ const parseVariantsPayload = (payload) => {
 };
 
 const normalizeVariantInput = (variant) => ({
+  id: variant?.id && !isNaN(Number(variant.id)) && Number(variant.id) < 1000000000000 ? Number(variant.id) : undefined,
   variant_name: variant?.variant_name || variant?.name || variant?.label || "Default",
-  quantity: variant?.quantity !== undefined && variant?.quantity !== "" ? Number(variant.quantity) : 0,
+  quantity: variant?.quantity !== undefined && variant?.quantity !== "" && !isNaN(Number(variant.quantity)) ? Number(variant.quantity) : 0,
   unit: variant?.unit || "ml",
-  price: variant?.price !== undefined && variant?.price !== "" && variant?.price !== null ? Number(variant.price) : null,
-  old_price: variant?.old_price !== undefined && variant?.old_price !== "" && variant?.old_price !== null ? Number(variant.old_price) : null,
-  stock_quantity: variant?.stock_quantity !== undefined && variant?.stock_quantity !== "" ? Number(variant.stock_quantity) : 0,
+  price: variant?.price !== undefined && variant?.price !== "" && variant?.price !== null && !isNaN(Number(variant.price)) ? Number(variant.price) : 0,
+  old_price: variant?.old_price !== undefined && variant?.old_price !== "" && variant?.old_price !== null && !isNaN(Number(variant.old_price)) ? Number(variant.old_price) : null,
+  stock_quantity: variant?.stock_quantity !== undefined && variant?.stock_quantity !== "" && !isNaN(Number(variant.stock_quantity)) ? Number(variant.stock_quantity) : 0,
   is_active: variant?.is_active !== false
 });
 

@@ -3740,22 +3740,67 @@ app.put(
     const uploadedFiles = [];
     try {
       const { id } = req.params;
-      let { name, description, old_price, price, stock_quantity, is_featured, is_active, color, sku, product_code, weight, length, width, height, category_id, sub_category_id } = req.body;
+      const getSingleValue = (val) => (Array.isArray(val) ? val[val.length - 1] : val);
+
+      let {
+        name,
+        description,
+        old_price,
+        price,
+        stock_quantity,
+        is_featured,
+        is_active,
+        color,
+        sku,
+        product_code,
+        weight,
+        length,
+        width,
+        height,
+        category_id,
+        sub_category_id,
+        platform_fee_percent,
+      } = req.body;
+
+      name = getSingleValue(name);
+      description = getSingleValue(description);
+      old_price = getSingleValue(old_price);
+      price = getSingleValue(price);
+      stock_quantity = getSingleValue(stock_quantity);
+      is_featured = getSingleValue(is_featured);
+      is_active = getSingleValue(is_active);
+      color = getSingleValue(color);
+      sku = getSingleValue(sku);
+      product_code = getSingleValue(product_code);
+      weight = getSingleValue(weight);
+      length = getSingleValue(length);
+      width = getSingleValue(width);
+      height = getSingleValue(height);
+      category_id = getSingleValue(category_id);
+      sub_category_id = getSingleValue(sub_category_id);
+      platform_fee_percent = getSingleValue(platform_fee_percent);
 
       const existing = await pool.query("SELECT main_image_url, video_url, vendor_id FROM products WHERE id = $1", [id]);
-      if (existing.rows.length === 0) throw new Error("Product not found");
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Product not found" });
+      }
       const userRole = req.user.role?.toLowerCase();
-      if (userRole !== 'super_admin' && existing.rows[0].vendor_id !== req.user.id) {
-        throw new Error("Unauthorized to edit this product");
+      if (userRole !== 'super_admin' && userRole !== 'admin' && existing.rows[0].vendor_id !== req.user.id) {
+        return res.status(403).json({ success: false, message: "Unauthorized to edit this product" });
       }
 
-      price = price !== undefined && price !== "" ? Number(price) : undefined;
-      old_price = old_price !== undefined && old_price !== "" ? Number(old_price) : undefined;
-      stock_quantity = stock_quantity !== undefined && stock_quantity !== "" ? Number(stock_quantity) : undefined;
+      price = price !== undefined && price !== "" && !isNaN(Number(price)) ? Number(price) : undefined;
+      old_price = old_price !== undefined && old_price !== "" && !isNaN(Number(old_price)) ? Number(old_price) : undefined;
+      stock_quantity = stock_quantity !== undefined && stock_quantity !== "" && !isNaN(Number(stock_quantity)) ? Number(stock_quantity) : undefined;
       is_featured = is_featured === "true" || is_featured === true || (is_featured === "false" || is_featured === false ? false : undefined);
       is_active = is_active === "true" || is_active === true || (is_active === "false" || is_active === false ? false : undefined);
-      const categoryId = category_id !== undefined && category_id !== "" ? Number(category_id) : undefined;
-      const subCategoryId = sub_category_id !== undefined && sub_category_id !== "" ? Number(sub_category_id) : undefined;
+      const categoryId = category_id !== undefined && category_id !== "" && !isNaN(Number(category_id)) ? Number(category_id) : undefined;
+      const subCategoryId = sub_category_id !== undefined && sub_category_id !== "" && !isNaN(Number(sub_category_id)) ? Number(sub_category_id) : undefined;
+      const weightNum = weight !== undefined && weight !== "" && !isNaN(Number(weight)) ? Number(weight) : undefined;
+      const lengthNum = length !== undefined && length !== "" && !isNaN(Number(length)) ? Number(length) : undefined;
+      const widthNum = width !== undefined && width !== "" && !isNaN(Number(width)) ? Number(width) : undefined;
+      const heightNum = height !== undefined && height !== "" && !isNaN(Number(height)) ? Number(height) : undefined;
+      const platformFeeNum = platform_fee_percent !== undefined && platform_fee_percent !== "" && !isNaN(Number(platform_fee_percent)) ? Number(platform_fee_percent) : undefined;
 
       const rawVariants = parseVariantsPayload(req.body.variants);
       const normalizedVariants = rawVariants
@@ -3765,37 +3810,95 @@ app.put(
         ? normalizedVariants
         : [{ variant_name: "Default", quantity: 0, unit: "ml", price: price || 0, old_price: old_price || null, stock_quantity: stock_quantity || 0, is_active: true }];
       const totalVariantStock = variantRows.reduce((sum, variant) => sum + Number(variant.stock_quantity || 0), 0);
-      const firstVariantPrice = variantRows[0]?.price !== undefined && variantRows[0]?.price !== null ? Number(variantRows[0].price) : Number(price) || 0;
-      const firstVariantOldPrice = variantRows[0]?.old_price !== undefined && variantRows[0]?.old_price !== null ? Number(variantRows[0].old_price) : (old_price ? Number(old_price) : null);
+      const firstVariantPrice = variantRows[0]?.price !== undefined && variantRows[0]?.price !== null ? Number(variantRows[0].price) : (price !== undefined ? Number(price) : 0);
+      const firstVariantOldPrice = variantRows[0]?.old_price !== undefined && variantRows[0]?.old_price !== null ? Number(variantRows[0].old_price) : (old_price !== undefined ? Number(old_price) : null);
 
-      let main_image_url = null; let video_url = null;
-      if (req.files?.image) { main_image_url = `/uploads/products/images/${req.files.image[0].filename} `; uploadedFiles.push(req.files.image[0].path); }
-      if (req.files?.video) { video_url = `/uploads/products/videos/${req.files.video[0].filename} `; uploadedFiles.push(req.files.video[0].path); }
+      let main_image_url = null;
+      let video_url = null;
+      if (req.files?.image) {
+        main_image_url = `/uploads/products/images/${req.files.image[0].filename}`;
+        uploadedFiles.push(req.files.image[0].path);
+      }
+      if (req.files?.video) {
+        video_url = `/uploads/products/videos/${req.files.video[0].filename}`;
+        uploadedFiles.push(req.files.video[0].path);
+      }
 
-      const updates = []; const values = []; let paramCount = 1;
-      const addField = (field, value) => { if (value !== undefined) { updates.push(`${field} = $${paramCount++} `); values.push(value); } };
+      const updates = [];
+      const values = [];
+      let paramCount = 1;
+      const addField = (field, value) => {
+        if (value !== undefined) {
+          updates.push(`${field} = $${paramCount++}`);
+          values.push(value);
+        }
+      };
 
-      addField('name', name); addField('description', description); addField('old_price', firstVariantOldPrice); addField('price', firstVariantPrice); addField('stock_quantity', stock_quantity !== undefined ? stock_quantity : totalVariantStock); addField('is_featured', is_featured); addField('is_active', is_active); addField('color', color); addField('sku', sku); addField('product_code', product_code); addField('weight', weight !== undefined && weight !== "" ? Number(weight) : undefined); addField('length', length !== undefined && length !== "" ? Number(length) : undefined); addField('width', width !== undefined && width !== "" ? Number(width) : undefined); addField('height', height !== undefined && height !== "" ? Number(height) : undefined); addField('category_id', categoryId); addField('sub_category_id', subCategoryId);
+      addField('name', name ? String(name).trim() : undefined);
+      addField('description', description !== undefined ? String(description) : undefined);
+      addField('old_price', firstVariantOldPrice);
+      addField('price', firstVariantPrice);
+      addField('stock_quantity', stock_quantity !== undefined ? stock_quantity : totalVariantStock);
+      addField('is_featured', is_featured);
+      addField('is_active', is_active);
+      addField('color', color !== undefined ? String(color) : undefined);
+      addField('sku', sku ? String(sku).trim() : undefined);
+      addField('product_code', product_code ? String(product_code).trim() : undefined);
+      addField('weight', weightNum);
+      addField('length', lengthNum);
+      addField('width', widthNum);
+      addField('height', heightNum);
+      addField('category_id', categoryId);
+      addField('sub_category_id', subCategoryId);
+      if (platformFeeNum !== undefined) addField('platform_fee_percent', platformFeeNum);
       if (main_image_url) addField('main_image_url', main_image_url);
       if (video_url) addField('video_url', video_url);
-      updates.push(`updated_at = NOW()`); values.push(id);
 
-      if (updates.length > 1) {
-        const query = `UPDATE products SET ${updates.join(", ")} WHERE id = $${paramCount} RETURNING * `;
-        const result = await pool.query(query, values);
-        await pool.query('DELETE FROM product_variants WHERE product_id = $1', [id]);
-        for (const variant of variantRows) {
+      updates.push(`updated_at = NOW()`);
+      values.push(id);
+
+      const query = `UPDATE products SET ${updates.join(", ")} WHERE id = $${paramCount} RETURNING *`;
+      const result = await pool.query(query, values);
+      const updatedProduct = result.rows[0];
+
+      // Update / Insert / Deactivate variants safely
+      const existingVariantsRes = await pool.query('SELECT id FROM product_variants WHERE product_id = $1', [id]);
+      const existingVariantIds = new Set(existingVariantsRes.rows.map(r => r.id));
+      const keptVariantIds = new Set();
+
+      for (const variant of variantRows) {
+        if (variant.id && existingVariantIds.has(variant.id)) {
           await pool.query(
-            `INSERT INTO product_variants(product_id, variant_name, quantity, unit, price, old_price, stock_quantity, is_active) VALUES($1, $2, $3, $4, $5, $6, $7, $8)`,
+            `UPDATE product_variants SET variant_name = $1, quantity = $2, unit = $3, price = $4, old_price = $5, stock_quantity = $6, is_active = $7, updated_at = NOW() WHERE id = $8 AND product_id = $9`,
+            [variant.variant_name, variant.quantity, variant.unit, variant.price, variant.old_price, variant.stock_quantity, variant.is_active, variant.id, id]
+          );
+          keptVariantIds.add(variant.id);
+        } else {
+          const insRes = await pool.query(
+            `INSERT INTO product_variants(product_id, variant_name, quantity, unit, price, old_price, stock_quantity, is_active) VALUES($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
             [id, variant.variant_name, variant.quantity, variant.unit, variant.price, variant.old_price, variant.stock_quantity, variant.is_active]
           );
+          if (insRes.rows[0]?.id) keptVariantIds.add(insRes.rows[0].id);
         }
-        const productWithVariants = await attachVariantsToProduct(result.rows[0]);
-        res.json({ success: true, product: productWithVariants });
-      } else {
-        res.json({ success: true, message: "No changes detected" });
       }
+
+      for (const oldId of existingVariantIds) {
+        if (!keptVariantIds.has(oldId)) {
+          try {
+            await pool.query('DELETE FROM product_variants WHERE id = $1', [oldId]);
+          } catch (delErr) {
+            await pool.query('UPDATE product_variants SET is_active = false, updated_at = NOW() WHERE id = $1', [oldId]);
+          }
+        }
+      }
+
+      const productWithVariants = await attachVariantsToProduct(updatedProduct);
+      res.json({ success: true, product: productWithVariants });
     } catch (error) {
+      for (const filePath of uploadedFiles) {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }
+      console.error("Product update error:", error);
       res.status(500).json({ success: false, message: error.message || "Update failed" });
     }
   }
@@ -3806,7 +3909,7 @@ app.get("/api/admin/products/:id", verifyToken, verifyAdminVendorIndividualAcces
     const result = await pool.query(`SELECT p.*, c.name AS category_name, s.name AS subcategory_name FROM products p LEFT JOIN categories c ON p.category_id = c.id LEFT JOIN sub_categories s ON p.sub_category_id = s.id WHERE p.id = $1`, [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
     const userRole = req.user.role?.toLowerCase();
-    if (userRole !== 'super_admin' && result.rows[0].vendor_id !== req.user.id) return res.status(403).json({ success: false, message: "Unauthorized" });
+    if (userRole !== 'super_admin' && userRole !== 'admin' && result.rows[0].vendor_id !== req.user.id) return res.status(403).json({ success: false, message: "Unauthorized" });
     const productWithVariants = await attachVariantsToProduct(result.rows[0]);
     res.json({ success: true, product: productWithVariants });
   } catch (error) {
@@ -3818,7 +3921,7 @@ app.delete("/api/admin/products/:id", verifyToken, verifyAdminVendorIndividualAc
   try {
     const existing = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [req.params.id]);
     const userRole = req.user.role?.toLowerCase();
-    if (userRole !== 'super_admin' && existing.rows[0]?.vendor_id !== req.user.id) {
+    if (userRole !== 'super_admin' && userRole !== 'admin' && existing.rows[0]?.vendor_id !== req.user.id) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
     await pool.query("DELETE FROM products WHERE id=$1", [req.params.id]);
@@ -3859,7 +3962,7 @@ app.patch("/api/admin/products/:id/stock", verifyToken, verifyAdminVendorIndivid
   try {
     const existing = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [req.params.id]);
     const userRole = req.user.role?.toLowerCase();
-    if (userRole !== 'super_admin' && existing.rows[0]?.vendor_id !== req.user.id) return res.status(403).json({ success: false, message: "Unauthorized" });
+    if (userRole !== 'super_admin' && userRole !== 'admin' && existing.rows[0]?.vendor_id !== req.user.id) return res.status(403).json({ success: false, message: "Unauthorized" });
     const result = await pool.query(`UPDATE products SET stock_quantity = $1, updated_at = NOW() WHERE id = $2 RETURNING * `, [req.body.stock_quantity, req.params.id]);
     res.json({ success: true, product: result.rows[0] });
   } catch (error) {
@@ -3897,7 +4000,7 @@ app.patch("/api/admin/products/:id/price", verifyToken, verifyAdminVendorIndivid
 
     const existing = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [id]);
     const userRole = req.user.role?.toLowerCase();
-    if (userRole !== 'super_admin' && existing.rows[0]?.vendor_id !== req.user.id) {
+    if (userRole !== 'super_admin' && userRole !== 'admin' && existing.rows[0]?.vendor_id !== req.user.id) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
@@ -4008,10 +4111,10 @@ app.post("/api/admin/products/:id/images", verifyToken, verifyAdminVendorIndivid
     const { id } = req.params;
     const existing = await pool.query("SELECT vendor_id FROM products WHERE id = $1", [id]);
     const userRole = req.user.role?.toLowerCase();
-    if (userRole !== 'super_admin' && existing.rows[0]?.vendor_id !== req.user.id) return res.status(403).json({ message: "Unauthorized" });
+    if (userRole !== 'super_admin' && userRole !== 'admin' && existing.rows[0]?.vendor_id !== req.user.id) return res.status(403).json({ message: "Unauthorized" });
 
     for (let i = 0; i < req.files.length; i++) {
-      const imageUrl = `/uploads/${req.files[i].filename} `;
+      const imageUrl = `/uploads/${req.files[i].filename}`;
       await pool.query(`INSERT INTO product_images(product_id, image_url, display_order) VALUES($1, $2, $3)`, [id, imageUrl, i]);
     }
     res.json({ success: true, message: "Images uploaded successfully" });

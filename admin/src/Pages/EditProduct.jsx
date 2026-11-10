@@ -292,20 +292,37 @@ const EditProduct = ({ id, onClose }) => {
     try {
       setSubmitting(true);
       const formData = new FormData();
-      Object.keys(product).forEach((key) => {
-        if (
-          key !== "main_image_url" &&
-          key !== "video_url" &&
-          product[key] !== null &&
-          product[key] !== undefined
-        ) {
-          formData.append(key, product[key]);
-        }
-      });
-      formData.append("description", product.description || "");
-      formData.append("category_id", product.category_id || "");
-      formData.append("sku", product.sku || "");
-      formData.append("product_code", product.product_code || "");
+      formData.append("name", (product.name || "").trim());
+      formData.append("description", description !== undefined && description !== null ? description : (product.description || ""));
+      if (product.category_id) {
+        formData.append("category_id", product.category_id);
+      }
+      if (product.sub_category_id) {
+        formData.append("sub_category_id", product.sub_category_id);
+      }
+      formData.append("sku", (product.sku || "").trim());
+      formData.append("product_code", (product.product_code || "").trim());
+      if (product.stock_quantity !== undefined && product.stock_quantity !== null && product.stock_quantity !== "") {
+        formData.append("stock_quantity", product.stock_quantity);
+      }
+      formData.append("is_featured", product.is_featured ? "true" : "false");
+      formData.append("is_active", product.is_active !== false ? "true" : "false");
+      formData.append("color", product.color || "");
+      if (product.weight !== undefined && product.weight !== null && product.weight !== "") {
+        formData.append("weight", product.weight);
+      }
+      if (product.length !== undefined && product.length !== null && product.length !== "") {
+        formData.append("length", product.length);
+      }
+      if (product.width !== undefined && product.width !== null && product.width !== "") {
+        formData.append("width", product.width);
+      }
+      if (product.height !== undefined && product.height !== null && product.height !== "") {
+        formData.append("height", product.height);
+      }
+      if (product.platform_fee_percent !== undefined && product.platform_fee_percent !== null && product.platform_fee_percent !== "") {
+        formData.append("platform_fee_percent", product.platform_fee_percent);
+      }
       formData.append("variants", JSON.stringify(variants));
       if (mainImage) formData.append("image", mainImage);
       if (video) formData.append("video", video);
@@ -334,7 +351,7 @@ const EditProduct = ({ id, onClose }) => {
       onClose();
     } catch (err) {
       console.error("Update error:", err);
-      toast.error(err.response?.data?.message || "Update failed");
+      toast.error(err.response?.data?.message || err.response?.data?.error || "Update failed");
     } finally {
       setSubmitting(false);
     }
